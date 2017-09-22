@@ -64,6 +64,7 @@ Intermediate/
 # except build/, which is used as an MSBuild target.
 !**/packages/build/
 .vs/
+.vscode/
 # Ignore cmake building directories
 build.*/
 docs/
