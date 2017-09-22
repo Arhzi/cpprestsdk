@@ -1,19 +1,7 @@
 /***
-* ==++==
+* Copyright (C) Microsoft. All rights reserved.
+* Licensed under the MIT license. See LICENSE.txt file in the project root for full license information.
 *
-* Copyright (c) Microsoft Corporation. All rights reserved.
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*
-* ==--==
 * =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
 *
 * Builder style class for creating URIs.
@@ -238,7 +226,7 @@ namespace web
         uri_builder &append_query(const utility::string_t &name, const T &value, bool do_encoding = true)
         {
             auto encodedName = name;
-            auto encodedValue = ::utility::conversions::print_string(value, std::locale::classic());
+            auto encodedValue = utility::conversions::details::print_string(value);
 
             if (do_encoding)
             {
@@ -273,13 +261,13 @@ namespace web
         /// Combine and validate the URI components into a encoded string. An exception will be thrown if the URI is invalid.
         /// </summary>
         /// <returns>The created URI as a string.</returns>
-        _ASYNCRTIMP utility::string_t to_string();
+        _ASYNCRTIMP utility::string_t to_string() const;
 
         /// <summary>
         /// Combine and validate the URI components into a URI class instance. An exception will be thrown if the URI is invalid.
         /// </summary>
         /// <returns>The create URI as a URI class instance.</returns>
-        _ASYNCRTIMP uri to_uri();
+        _ASYNCRTIMP uri to_uri() const;
 
         /// <summary>
         /// Validate the generated URI from all existing components of this uri_builder.

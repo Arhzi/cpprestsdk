@@ -1,19 +1,7 @@
 /***
-* ==++==
+* Copyright (C) Microsoft. All rights reserved.
+* Licensed under the MIT license. See LICENSE.txt file in the project root for full license information.
 *
-* Copyright (c) Microsoft Corporation. All rights reserved.
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-* http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*
-* ==--==
 * =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
 *
 * HTTP Library: Client-side APIs.
@@ -27,6 +15,7 @@
 #include "stdafx.h"
 
 #include "http_client_impl.h"
+#include "../common/internal_http_helpers.h"
 
 #include <Strsafe.h>
 // Important for WP8
@@ -104,7 +93,7 @@ public:
                     (*progress)(message_direction::upload, 0);
                 }
 
-                parse_headers_string(hdrStr, response.headers());
+                web::http::details::parse_headers_string(hdrStr, response.headers());
                 m_request->complete_headers();
             }
             catch (...)
@@ -454,13 +443,13 @@ protected:
             if (client_cred.is_set())
             {
                 username = client_cred.username();
-                password_plaintext = client_cred.decrypt();
+                password_plaintext = client_cred._internal_decrypt();
                 password = password_plaintext->c_str();
             }
             if (proxy_cred.is_set())
             {
                 proxy_username = proxy_cred.username();
-                proxy_password_plaintext = proxy_cred.decrypt();
+                proxy_password_plaintext = proxy_cred._internal_decrypt();
                 proxy_password = proxy_password_plaintext->c_str();
             }
 
