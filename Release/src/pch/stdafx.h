@@ -88,6 +88,7 @@
 #include <exception>
 #include <assert.h>
 #include <streambuf>
+#include <atomic>
 #include <mutex>
 #include <array>
 #include <vector>
@@ -110,7 +111,6 @@
 
 // uri
 #include "cpprest/base_uri.h"
-#include "cpprest/details/uri_parser.h"
 
 // utilities
 #include "cpprest/asyncrt_utils.h"
