@@ -4,10 +4,14 @@ if(POLICY CMP0042)
   cmake_policy(SET CMP0042 NEW) # use MACOSX_RPATH
 endif()
 if(UNIX)
-  project(cpprest C CXX)
+  project(cpprestsdk C CXX)
 else()
-  project(cpprest CXX)
+  project(cpprestsdk CXX)
 endif()
+
+set(CPPREST_VERSION_MAJOR 2)
+set(CPPREST_VERSION_MINOR 10)
+set(CPPREST_VERSION_REVISION 2)
 
 enable_testing()
 
@@ -32,6 +36,22 @@ else()
   set(BUILD_SAMPLES ON CACHE BOOL "Build sample applications.")
 endif()
 
+if(WIN32)
+  set(CMAKE_DEBUG_POSTFIX "d" CACHE STRING "Default filename postfix for libraries under configuration DEBUG")
+else()
+  set(CMAKE_DEBUG_POSTFIX "" CACHE STRING "Default filename postfix for libraries under configuration DEBUG")
+endif()
+
+if(WIN32)
+  set(TOOLSET)
+  if(CMAKE_VS_PLATFORM_TOOLSET)
+    string(REGEX REPLACE "^v" "" TOOLSET "${CMAKE_VS_PLATFORM_TOOLSET}")
+  endif()
+  set(CPPREST_ABI_TAG "${TOOLSET}_${CPPREST_VERSION_MAJOR}_${CPPREST_VERSION_MINOR}" CACHE STRING "Postfix tag for the cpprest abi")
+else()
+  set(CPPREST_ABI_TAG "" CACHE STRING "Postfix tag for the cpprest abi")
+endif()
+
 if(ANDROID)
   set(Boost_USE_STATIC_LIBS ON CACHE BOOL "Link against boost statically.")
 else()
@@ -42,6 +62,7 @@ include(cmake/cpprest_find_boost.cmake)
 include(cmake/cpprest_find_zlib.cmake)
 include(cmake/cpprest_find_openssl.cmake)
 include(cmake/cpprest_find_websocketpp.cmake)
+include(CheckIncludeFiles)
 
 find_package(Threads REQUIRED)
 if(THREADS_HAVE_PTHREAD_ARG)
@@ -54,6 +75,10 @@ endif()
 # Internal component selection logic. This allows us to avoid duplicating platform logic in multiple places.
 if(CPPREST_EXCLUDE_WEBSOCKETS)
   set(CPPREST_WEBSOCKETS_IMPL none CACHE STRING "Internal use.")
+endif()
+
+if(NOT WIN32)
+  CHECK_INCLUDE_FILES(xlocale.h HAVE_XLOCALE_H)
 endif()
 
 if(APPLE) # Note: also iOS
@@ -163,6 +188,9 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
   set(LD_FLAGS "${LD_FLAGS} -Wl,-z,defs")
 
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -fno-strict-aliasing")
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS 4.8)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive -D_GLIBCXX_USE_SCHED_YIELD -D_GLIBCXX_USE_NANOSLEEP")
+  endif()
 
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
   message("-- Setting msvc options")

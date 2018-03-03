@@ -13,6 +13,10 @@
 * =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 */
 #include "stdafx.h"
+
+#undef min
+#undef max
+
 #include <boost/algorithm/string/find.hpp>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/asio/read_until.hpp>
@@ -122,6 +126,7 @@ namespace
     class hostport_listener
     {
     private:
+        int m_backlog;
         std::unique_ptr<boost::asio::ip::tcp::acceptor> m_acceptor;
         std::map<std::string, http_listener_impl* > m_listeners;
         pplx::extensibility::reader_writer_lock_t m_listeners_lock;
@@ -140,7 +145,8 @@ namespace
 
     public:
         hostport_listener(http_linux_server* server, const std::string& hostport, bool is_https, const http_listener_config& config)
-            : m_acceptor()
+            : m_backlog(config.backlog())
+            , m_acceptor()
             , m_listeners()
             , m_listeners_lock()
             , m_connections_lock()
@@ -482,8 +488,11 @@ void hostport_listener::start()
 
     tcp::endpoint endpoint = *resolver.resolve(query);
 
-    m_acceptor.reset(new tcp::acceptor(service, endpoint));
-    m_acceptor->set_option(tcp::acceptor::reuse_address(true));
+    m_acceptor.reset(new tcp::acceptor(service));
+    m_acceptor->open(endpoint.protocol());
+    m_acceptor->set_option(socket_base::reuse_address(true));
+    m_acceptor->bind(endpoint);
+    m_acceptor->listen(0 != m_backlog ? m_backlog : socket_base::max_connections);
 
     auto socket = new ip::tcp::socket(service);
     m_acceptor->async_accept(*socket, [this, socket](const boost::system::error_code& ec)
@@ -637,7 +646,7 @@ will_deref_and_erase_t asio_server_connection::handle_http_line(const boost::sys
         {
             m_request.set_request_uri(utility::conversions::to_string_t(http_path_and_version.substr(1, http_path_and_version.size() - VersionPortionSize - 1)));
         }
-        catch(const web::uri_exception &e)
+        catch (const std::exception& e) // may be std::range_error indicating invalid Unicode, or web::uri_exception
         {
             m_request.reply(status_codes::BadRequest, e.what());
             m_close = true;
@@ -648,14 +657,24 @@ will_deref_and_erase_t asio_server_connection::handle_http_line(const boost::sys
 
         // Get the version
         std::string http_version = http_path_and_version.substr(http_path_and_version.size() - VersionPortionSize + 1, VersionPortionSize - 2);
+
+        auto m_request_impl = m_request._get_impl().get();
+        web::http::http_version parsed_version = web::http::http_version::from_string(utility::conversions::to_string_t(http_version));
+        m_request_impl->_set_http_version(parsed_version);
+
         // if HTTP version is 1.0 then disable pipelining
-        if (http_version == "HTTP/1.0")
+        if (parsed_version == web::http::http_versions::HTTP_1_0)
         {
             m_close = true;
         }
 
         // Get the remote IP address
-        m_request._get_impl()->_set_remote_address(utility::conversions::to_string_t(m_socket->remote_endpoint().address().to_string()));
+        boost::system::error_code socket_ec;
+        auto endpoint = m_socket->remote_endpoint(socket_ec);
+        if (!socket_ec)
+        {
+            m_request._get_impl()->_set_remote_address(utility::conversions::to_string_t(endpoint.address().to_string()));
+        }
 
         return handle_headers();
     }
@@ -913,7 +932,7 @@ will_deref_and_erase_t asio_server_connection::dispatch_request_to_listener()
     {
         pListener = m_p_parent->find_listener(m_request.relative_uri());
     }
-    catch (const web::uri_exception&)
+    catch (const std::exception&) // may be web::uri_exception, or std::range_error indicating invalid Unicode
     {
         m_request.reply(status_codes::BadRequest);
         (will_erase_from_parent_t)do_response();

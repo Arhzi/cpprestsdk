@@ -52,7 +52,7 @@ using java_local_ref = std::unique_ptr<typename std::remove_pointer<T>::type, ja
 class threadpool
 {
 public:
-    static threadpool& shared_instance();
+    _ASYNCRTIMP static threadpool& shared_instance();
     _ASYNCRTIMP static std::unique_ptr<threadpool> __cdecl construct(size_t num_threads);
 
     virtual ~threadpool() = default;
@@ -67,9 +67,10 @@ public:
     boost::asio::io_service& service() { return m_service; }
 
 protected:
-    threadpool(size_t num_threads) : m_service(num_threads) {}
+    threadpool(size_t num_threads) : m_service(static_cast<int>(num_threads)) {}
 
     boost::asio::io_service m_service;
 };
 
 }
+
