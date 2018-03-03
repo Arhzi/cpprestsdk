@@ -20,6 +20,10 @@
 
 #include "ws_client_impl.h"
 
+// These must be undef'ed before including websocketpp because it is not Windows.h safe.
+#undef min
+#undef max
+
 // Force websocketpp to use C++ std::error_code instead of Boost.
 #define _WEBSOCKETPP_CPP11_SYSTEM_ERROR_
 #if defined(_MSC_VER)
@@ -127,7 +131,7 @@ public:
 #endif
     {}
 
-    ~wspp_callback_client()
+    ~wspp_callback_client() CPPREST_NOEXCEPT
     {
         _ASSERTE(m_state < DESTROYED);
         std::unique_lock<std::mutex> lock(m_wspp_client_lock);
@@ -312,6 +316,15 @@ public:
             shutdown_wspp_impl<WebsocketConfigType>(con_hdl, false);
         });
 
+        // Set User Agent specified by the user. This needs to happen before any connection is created
+        const auto& headers = m_config.headers();
+
+        auto user_agent_it = headers.find(web::http::header_names::user_agent);
+        if (user_agent_it != headers.end())
+        {
+            client.set_user_agent(utility::conversions::to_utf8string(user_agent_it->second));
+        }
+
         // Get the connection handle to save for later, have to create temporary
         // because type erasure occurs with connection_hdl.
         websocketpp::lib::error_code ec;
@@ -323,7 +336,6 @@ public:
         }
 
         // Add any request headers specified by the user.
-        const auto & headers = m_config.headers();
         for (const auto & header : headers)
         {
             if (!utility::details::str_icmp(header.first, g_subProtocolHeader))
@@ -730,6 +742,7 @@ private:
     };
     struct websocketpp_client : websocketpp_client_base
     {
+        ~websocketpp_client() CPPREST_NOEXCEPT {}
         websocketpp::client<websocketpp::config::asio_client> & non_tls_client() override
         {
             return m_client;
@@ -739,6 +752,7 @@ private:
     };
     struct websocketpp_tls_client : websocketpp_client_base
     {
+        ~websocketpp_tls_client() CPPREST_NOEXCEPT {}
         websocketpp::client<websocketpp::config::asio_tls_client> & tls_client() override
         {
             return m_client;
@@ -792,3 +806,4 @@ websocket_callback_client::websocket_callback_client(websocket_client_config con
 }}}
 
 #endif
+

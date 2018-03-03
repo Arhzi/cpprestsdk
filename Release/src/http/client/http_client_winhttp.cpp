@@ -21,6 +21,9 @@
 #include <VersionHelpers.h>
 #endif
 
+#undef min
+#undef max
+
 namespace web
 {
 namespace http
@@ -409,6 +412,7 @@ protected:
         DWORD access_type;
         LPCWSTR proxy_name;
         LPCWSTR proxy_bypass = WINHTTP_NO_PROXY_BYPASS;
+        utility::string_t proxy_str;
         http::uri uri;
 
         const auto& config = client_config();
@@ -482,7 +486,6 @@ protected:
             }
             else
             {
-                utility::string_t proxy_str;
                 if (uri.port() > 0)
                 {
                     utility::ostringstream_t ss;
@@ -1038,6 +1041,25 @@ private:
         }
     }
 
+    static utility::string_t get_request_url(HINTERNET hRequestHandle)
+    {
+        DWORD urlSize{ 0 };
+        if(FALSE == WinHttpQueryOption(hRequestHandle, WINHTTP_OPTION_URL, nullptr, &urlSize) || urlSize == 0)
+        {
+            return U("");
+        }
+
+        auto urlwchar = new WCHAR[urlSize / sizeof(WCHAR)];
+
+        WinHttpQueryOption(hRequestHandle, WINHTTP_OPTION_URL, (void*)urlwchar, &urlSize);
+
+        utility::string_t url(urlwchar);
+
+        delete[] urlwchar;
+
+        return url;
+    }
+
     // Returns true if we handle successfully and resending the request
     // or false if we fail to handle.
     static bool handle_authentication_failure(
@@ -1094,10 +1116,22 @@ private:
                 cred = p_request_context->m_http_client->client_config().credentials();
                 p_request_context->m_server_authentication_tried = true;
             }
-            else if (dwAuthTarget == WINHTTP_AUTH_TARGET_PROXY && !p_request_context->m_proxy_authentication_tried)
+            else if (dwAuthTarget == WINHTTP_AUTH_TARGET_PROXY)
             {
-                cred = p_request_context->m_http_client->client_config().proxy().credentials();
-                p_request_context->m_proxy_authentication_tried = true;
+                bool is_redirect = false;
+                try
+                {
+                    web::uri current_uri(get_request_url(hRequestHandle));
+                    is_redirect = p_request_context->m_request.absolute_uri().to_string() != current_uri.to_string();	
+                }
+                catch (const std::exception&) {}
+     
+                // If we have been redirected, then WinHttp needs the proxy credentials again to make the next request leg (which may be on a different server)
+                if (is_redirect || !p_request_context->m_proxy_authentication_tried)
+                {
+                    cred = p_request_context->m_http_client->client_config().proxy().credentials();
+                    p_request_context->m_proxy_authentication_tried = true;
+                }
             }
 
             // No credentials found so can't resend.
@@ -1527,3 +1561,4 @@ std::shared_ptr<_http_client_communicator> create_platform_final_pipeline_stage(
 }
 
 }}}}
+

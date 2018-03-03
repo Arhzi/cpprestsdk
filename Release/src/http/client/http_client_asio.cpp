@@ -15,6 +15,9 @@
 
 #include "stdafx.h"
 
+#undef min
+#undef max
+
 #include "cpprest/asyncrt_utils.h"
 #include "../common/internal_http_helpers.h"
 
@@ -43,6 +46,33 @@
 #include "cpprest/details/http_helpers.h"
 #include <unordered_set>
 #include <memory>
+
+#if defined(__GNUC__)
+
+#if __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 8)
+#define AND_CAPTURE_MEMBER_FUNCTION_POINTERS
+#else
+// GCC Bug 56222 - Pointer to member in lambda should not require this to be captured
+// See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=56222
+// GCC Bug 51494 - Legal program rejection - capturing "this" when using static method inside lambda
+// See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=51494
+#define AND_CAPTURE_MEMBER_FUNCTION_POINTERS , this
+#endif
+
+#elif defined(_MSC_VER)
+
+#if _MSC_VER >= 1900
+#define AND_CAPTURE_MEMBER_FUNCTION_POINTERS
+#else
+// This bug also afflicts VS2013 which incorrectly reports "warning C4573: the usage of 'symbol' requires the compiler to capture 'this' but the current default capture mode does not allow it"
+#define AND_CAPTURE_MEMBER_FUNCTION_POINTERS , this
+#endif
+
+#else
+
+#define AND_CAPTURE_MEMBER_FUNCTION_POINTERS
+
+#endif
 
 using boost::asio::ip::tcp;
 
@@ -450,12 +480,13 @@ public:
 
             const auto &base_uri = m_context->m_http_client->base_uri();
             const auto &host = utility::conversions::to_utf8string(base_uri.host());
+            const auto &port = base_uri.port();
 
             std::ostream request_stream(&m_request);
             request_stream.imbue(std::locale::classic());
 
-            request_stream << "CONNECT " << host << ":" << 443 << " HTTP/1.1" << CRLF;
-            request_stream << "Host: " << host << ":" << 443 << CRLF;
+            request_stream << "CONNECT " << host << ":" << ((port != 0) ? port : 443) << " HTTP/1.1" << CRLF;
+            request_stream << "Host: " << host << ":" << ((port != 0) ? port : 443) << CRLF;
             request_stream << "Proxy-Connection: Keep-Alive" << CRLF;
 
             if(m_context->m_http_client->client_config().proxy().credentials().is_set())
@@ -620,7 +651,7 @@ public:
             proxy_host = utility::conversions::to_utf8string(proxy_uri.host());
         }
         
-        auto start_http_request_flow = [proxy_type, proxy_host, proxy_port](std::shared_ptr<asio_context> ctx)
+        auto start_http_request_flow = [proxy_type, proxy_host, proxy_port AND_CAPTURE_MEMBER_FUNCTION_POINTERS](std::shared_ptr<asio_context> ctx)
         {
             if (ctx->m_request._cancellation_token().is_canceled())
             {
@@ -1010,7 +1041,7 @@ private:
         auto readbuf = _get_readbuffer();
         uint8_t *buf = boost::asio::buffer_cast<uint8_t *>(m_body_buf.prepare(chunkSize + http::details::chunked_encoding::additional_encoding_space));
         const auto this_request = shared_from_this();
-        readbuf.getn(buf + http::details::chunked_encoding::data_offset, chunkSize).then([this_request, buf, chunkSize](pplx::task<size_t> op)
+        readbuf.getn(buf + http::details::chunked_encoding::data_offset, chunkSize).then([this_request, buf, chunkSize AND_CAPTURE_MEMBER_FUNCTION_POINTERS](pplx::task<size_t> op)
         {
             size_t readSize = 0;
             try
@@ -1067,7 +1098,7 @@ private:
         const auto this_request = shared_from_this();
         const auto readSize = static_cast<size_t>(std::min(static_cast<uint64_t>(m_http_client->client_config().chunksize()), m_content_length - m_uploaded));
         auto readbuf = _get_readbuffer();
-        readbuf.getn(boost::asio::buffer_cast<uint8_t *>(m_body_buf.prepare(readSize)), readSize).then([this_request](pplx::task<size_t> op)
+        readbuf.getn(boost::asio::buffer_cast<uint8_t *>(m_body_buf.prepare(readSize)), readSize).then([this_request AND_CAPTURE_MEMBER_FUNCTION_POINTERS](pplx::task<size_t> op)
         {
             try
             {
@@ -1370,7 +1401,7 @@ private:
                         auto shared_decompressed = std::make_shared<data_buffer>(std::move(decompressed));
 
                         writeBuffer.putn_nocopy(shared_decompressed->data(), shared_decompressed->size())
-                            .then([this_request, to_read, shared_decompressed](pplx::task<size_t> op)
+                            .then([this_request, to_read, shared_decompressed AND_CAPTURE_MEMBER_FUNCTION_POINTERS](pplx::task<size_t> op)
                         {
                             try
                             {
@@ -1388,7 +1419,7 @@ private:
                 }
                 else
                 {
-                    writeBuffer.putn_nocopy(boost::asio::buffer_cast<const uint8_t *>(m_body_buf.data()), to_read).then([this_request, to_read](pplx::task<size_t> op)
+                    writeBuffer.putn_nocopy(boost::asio::buffer_cast<const uint8_t *>(m_body_buf.data()), to_read).then([this_request, to_read AND_CAPTURE_MEMBER_FUNCTION_POINTERS](pplx::task<size_t> op)
                     {
                         try
                         {
@@ -1485,7 +1516,7 @@ private:
                     auto shared_decompressed = std::make_shared<data_buffer>(std::move(decompressed));
 
                     writeBuffer.putn_nocopy(shared_decompressed->data(), shared_decompressed->size())
-                        .then([this_request, read_size, shared_decompressed](pplx::task<size_t> op)
+                        .then([this_request, read_size, shared_decompressed AND_CAPTURE_MEMBER_FUNCTION_POINTERS](pplx::task<size_t> op)
                     {
                         size_t writtenSize = 0;
                         try
@@ -1507,7 +1538,7 @@ private:
             else
             {
                 writeBuffer.putn_nocopy(boost::asio::buffer_cast<const uint8_t *>(m_body_buf.data()), read_size)
-                .then([this_request](pplx::task<size_t> op)
+                .then([this_request AND_CAPTURE_MEMBER_FUNCTION_POINTERS](pplx::task<size_t> op)
                 {
                     size_t writtenSize = 0;
                     try
@@ -1558,7 +1589,7 @@ private:
 
             m_timer.expires_from_now(m_duration);
             auto ctx = m_ctx;
-            m_timer.async_wait([ctx](const boost::system::error_code& ec)
+            m_timer.async_wait([ctx AND_CAPTURE_MEMBER_FUNCTION_POINTERS](const boost::system::error_code& ec)
                                {
                                    handle_timeout(ec, ctx);
                                });
@@ -1573,7 +1604,7 @@ private:
                 // The existing handler was canceled so schedule a new one.
                 assert(m_state == started);
                 auto ctx = m_ctx;
-                m_timer.async_wait([ctx](const boost::system::error_code& ec)
+                m_timer.async_wait([ctx AND_CAPTURE_MEMBER_FUNCTION_POINTERS](const boost::system::error_code& ec)
                 {
                     handle_timeout(ec, ctx);
                 });

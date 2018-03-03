@@ -22,6 +22,9 @@
 #include "http_server_httpsys.h"
 #include "http_server_impl.h"
 
+#undef min
+#undef max
+
 using namespace web;
 using namespace utility;
 using namespace concurrency;
@@ -556,6 +559,8 @@ void windows_request_context::read_headers_io_completion(DWORD error_code, DWORD
         }
         m_msg.set_method(parse_request_method(m_request));
         parse_http_headers(m_request->Headers, m_msg.headers());
+
+        m_msg._get_impl()->_set_http_version({ (uint8_t)m_request->Version.MajorVersion, (uint8_t)m_request->Version.MinorVersion });
 
         // Retrieve the remote IP address
         std::vector<wchar_t> remoteAddressBuffer(50);
