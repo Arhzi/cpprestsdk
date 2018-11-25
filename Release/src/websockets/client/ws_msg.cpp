@@ -13,6 +13,9 @@
 * =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 ****/
 #include "stdafx.h"
+#include <sstream>
+#include "cpprest/ws_client.h"
+#include "cpprest/ws_msg.h"
 #include "../../http/common/internal_http_helpers.h"
 
 #if !defined(CPPREST_EXCLUDE_WEBSOCKETS)
@@ -45,7 +48,7 @@ std::vector<::utility::string_t> websocket_client_config::subprotocols() const
     auto subprotocolHeader = m_headers.find(g_subProtocolHeader);
     if (subprotocolHeader != m_headers.end())
     {
-        utility::stringstream_t header(subprotocolHeader->second);
+        utility::istringstream_t header(subprotocolHeader->second);
         utility::string_t token;
         while (std::getline(header, token, U(',')))
         {

@@ -13,7 +13,7 @@
 
 #include "stdafx.h"
 
-#if !defined(_WIN32) || _MSC_VER < 1800 || CPPREST_FORCE_PPLX
+#if !defined(_WIN32) || CPPREST_FORCE_PPLX
 
 #include "pplx/pplxwin.h"
 
@@ -275,4 +275,19 @@ namespace details
 
 } // namespace pplx
 
+#else
+namespace Concurrency
+{
+
+void __cdecl set_cpprestsdk_ambient_scheduler(const std::shared_ptr<scheduler_interface>& _Scheduler)
+{
+    pplx::set_ambient_scheduler(_Scheduler);
+}
+
+const std::shared_ptr<scheduler_interface>& __cdecl get_cpprestsdk_ambient_scheduler()
+{
+    return pplx::get_ambient_scheduler();
+}
+
+} // namespace pplx
 #endif

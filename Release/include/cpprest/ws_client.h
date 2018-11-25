@@ -10,8 +10,8 @@
 ****/
 #pragma once
 
-#ifndef _CASA_WS_CLIENT_H
-#define _CASA_WS_CLIENT_H
+#ifndef CASA_WS_CLIENT_H
+#define CASA_WS_CLIENT_H
 
 #include "cpprest/details/basic_types.h"
 
@@ -142,7 +142,7 @@ public:
     }
 
     /// <summary>
-    /// Gets the server host name to usefor TLS Server Name Indication (SNI).
+    /// Gets the server host name to use for TLS Server Name Indication (SNI).
     /// </summary>
     /// <returns>Host name as a string.</returns>
     const utf8string & server_name() const
@@ -184,7 +184,7 @@ public:
     /// <returns>Vector of all the subprotocols </returns>
     /// <remarks>If you want all the subprotocols in a comma separated string
     /// they can be directly looked up in the headers using 'Sec-WebSocket-Protocol'.</remarks>
-    _ASYNCRTIMP std::vector<::utility::string_t> subprotocols() const;
+    _ASYNCRTIMP std::vector< ::utility::string_t> subprotocols() const;
 	
     /// <summary>
     /// Gets the server certificate validation property.

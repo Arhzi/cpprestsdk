@@ -205,6 +205,31 @@ TEST(utf8_to_utf16)
 #else
     VERIFY_ARE_EQUAL(conversion.from_bytes(input), result);
 #endif
+
+
+    // 1 byte character followed by 4 byte character
+    input.clear();
+    input.push_back( 51u); // 00110011
+    // U+10000
+    input.push_back(244u); // 11110100
+    input.push_back(128u); // 10000000
+    input.push_back(128u); // 10000000
+    input.push_back(128u); // 10000000
+    // U+10FFFF
+    input.push_back(244u); // 11110100
+    input.push_back(143u); // 10001111
+    input.push_back(191u); // 10111111
+    input.push_back(191u); // 10111111
+    result = utility::conversions::utf8_to_utf16(input);
+#if defined(__GLIBCXX__)
+    VERIFY_ARE_EQUAL(51, result[0]);
+    VERIFY_ARE_EQUAL(56256, result[1]);
+    VERIFY_ARE_EQUAL(56320, result[2]);
+    VERIFY_ARE_EQUAL(56319, result[3]);
+    VERIFY_ARE_EQUAL(57343, result[4]);
+#else
+    VERIFY_ARE_EQUAL(conversion.from_bytes(input), result);
+#endif
 }
 
 TEST(utf16_to_utf8_errors)
@@ -347,6 +372,17 @@ TEST(scan_string_locale, "Ignore:Android", "Locale unsupported on Android")
         VERIFY_ARE_EQUAL(_XPLATSTR("1,000"), utility::conversions::scan_string<utility::string_t>(utility::string_t(_XPLATSTR("1,000")), std::locale::classic()));
     }
 }
+
+
+#ifdef _WIN32
+TEST(windows_category_message)
+{
+   // Ensure the error message string returned by windows_category doesn't contain trailing zeros.
+   std::string error_message = utility::details::windows_category().message( 0 );
+   std::string zero_terminated_copy = error_message.c_str();
+   VERIFY_ARE_EQUAL( zero_terminated_copy, error_message );
+}
+#endif // _WIN32
 
 }
     
