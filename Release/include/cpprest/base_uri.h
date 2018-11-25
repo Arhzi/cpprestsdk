@@ -14,10 +14,9 @@
 #pragma once
 
 #include <map>
-#include <memory>
 #include <string>
 #include <vector>
-#include <functional>
+#include <utility>
 
 #include "cpprest/asyncrt_utils.h"
 #include "cpprest/details/basic_types.h"
@@ -29,8 +28,8 @@ namespace web {
         {
             uri_components() : m_path(_XPLATSTR("/")), m_port(-1) {}
 
-            uri_components(const uri_components &other) = default;
-            uri_components & operator=(const uri_components &other) = default;
+            uri_components(const uri_components &) = default;
+            uri_components & operator=(const uri_components &) = default;
 
             // This is for VS2013 compatibility -- replace with '= default' when VS2013 is completely dropped.
             uri_components(uri_components &&other) CPPREST_NOEXCEPT :
@@ -94,7 +93,7 @@ namespace web {
     /// <summary>
     /// A flexible, protocol independent URI implementation.
     ///
-    /// URI instances are immutable. Querying the various fields on an emtpy URI will return empty strings. Querying
+    /// URI instances are immutable. Querying the various fields on an empty URI will return empty strings. Querying
     /// various diagnostic members on an empty URI will return false.
     /// </summary>
     /// <remarks>
@@ -209,12 +208,12 @@ namespace web {
         /// <summary>
         /// Copy constructor.
         /// </summary>
-        uri(const uri &other) = default;
+        uri(const uri &) = default;
 
         /// <summary>
         /// Copy assignment operator.
         /// </summary>
-        uri & operator=(const uri &other) = default;
+        uri & operator=(const uri &) = default;
 
         /// <summary>
         /// Move constructor.
@@ -305,7 +304,7 @@ namespace web {
         /// A loopback URI is one which refers to a hostname or ip address with meaning only on the local machine.
         /// </summary>
         /// <remarks>
-        /// Examples include "locahost", or ip addresses in the loopback range (127.0.0.0/24).
+        /// Examples include "localhost", or ip addresses in the loopback range (127.0.0.0/24).
         /// </remarks>
         /// <returns><c>true</c> if this URI references the local host, <c>false</c> otherwise.</returns>
         bool is_host_loopback() const
@@ -379,11 +378,19 @@ namespace web {
         /// <summary>
         /// Returns the full (encoded) URI as a string.
         /// </summary>
-         /// <returns>The full encoded URI string.</returns>
+        /// <returns>The full encoded URI string.</returns>
         utility::string_t to_string() const
         {
             return m_uri;
         }
+
+        /// <summary>
+        /// Returns an URI resolved against <c>this</c> as the base URI
+        /// according to RFC3986, Section 5 (https://tools.ietf.org/html/rfc3986#section-5).
+        /// </summary>
+        /// <param name="relativeUri">The relative URI to be resolved against <c>this</c> as base.</param>
+        /// <returns>The new resolved URI string.</returns>
+        _ASYNCRTIMP utility::string_t resolve_uri(const utility::string_t &relativeUri) const;
 
         _ASYNCRTIMP bool operator == (const uri &other) const;
 

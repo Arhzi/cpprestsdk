@@ -12,8 +12,8 @@
 ****/
 #pragma once
 
-#ifndef _CASA_JSON_H
-#define _CASA_JSON_H
+#ifndef CASA_JSON_H
+#define CASA_JSON_H
 
 #include <memory>
 #include <string>
@@ -301,7 +301,7 @@ public:
         /// <param name="fields">Field names associated with JSON values</param>
         /// <param name="keep_order">Whether to preserve the original order of the fields</param>
         /// <returns>A non-empty JSON object value</returns>
-        static _ASYNCRTIMP json::value __cdecl object(std::vector<std::pair<::utility::string_t, value>> fields, bool keep_order = false);
+        static _ASYNCRTIMP json::value __cdecl object(std::vector<std::pair< ::utility::string_t, value>> fields, bool keep_order = false);
 
         /// <summary>
         /// Creates an empty JSON array
@@ -524,14 +524,14 @@ public:
         /// Compares two JSON values for equality.
         /// </summary>
         /// <param name="other">The JSON value to compare with.</param>
-        /// <returns>True iff the values are equal.</returns>
+        /// <returns>True if the values are equal.</returns>
         _ASYNCRTIMP bool operator==(const value& other) const;
 
         /// <summary>
         /// Compares two JSON values for inequality.
         /// </summary>
         /// <param name="other">The JSON value to compare with.</param>
-        /// <returns>True iff the values are unequal.</returns>
+        /// <returns>True if the values are unequal.</returns>
         bool operator!=(const value& other) const
         {
             return !((*this) == other);
@@ -714,7 +714,11 @@ public:
     private:
         std::string _message;
     public:
-        json_exception(const utility::char_t * const &message) : _message(utility::conversions::to_utf8string(message)) { }
+        json_exception(const char * const message) : _message(message) { }
+#ifdef _UTF16_STRINGS
+        json_exception(const wchar_t * const message) : _message(utility::conversions::utf16_to_utf8(message)) { }
+#endif // _UTF16_STRINGS
+        json_exception(std::string&& message) : _message(std::move(message)) { }
 
         // Must be narrow string because it derives from std::exception
         const char* what() const CPPREST_NOEXCEPT
@@ -930,7 +934,7 @@ public:
         {
             if (index >= m_elements.size())
             {
-                throw json_exception(_XPLATSTR("index out of bounds"));
+                throw json_exception("index out of bounds");
             }
             m_elements.erase(m_elements.begin() + index);
         }
@@ -943,7 +947,7 @@ public:
         json::value& at(size_type index)
         {
             if (index >= m_elements.size())
-                throw json_exception(_XPLATSTR("index out of bounds"));
+                throw json_exception("index out of bounds");
 
             return m_elements[index];
         }
@@ -956,7 +960,7 @@ public:
         const json::value& at(size_type index) const
         {
             if (index >= m_elements.size())
-                throw json_exception(_XPLATSTR("index out of bounds"));
+                throw json_exception("index out of bounds");
 
             return m_elements[index];
         }
@@ -1145,7 +1149,7 @@ public:
             auto iter = find_by_key(key);
             if (iter == m_elements.end())
             {
-                throw web::json::json_exception(_XPLATSTR("Key not found"));
+                throw web::json::json_exception("Key not found");
             }
 
             m_elements.erase(iter);
@@ -1161,7 +1165,7 @@ public:
             auto iter = find_by_key(key);
             if (iter == m_elements.end())
             {
-                throw web::json::json_exception(_XPLATSTR("Key not found"));
+                throw web::json::json_exception("Key not found");
             }
 
             return iter->second;
@@ -1177,7 +1181,7 @@ public:
             auto iter = find_by_key(key);
             if (iter == m_elements.end())
             {
-                throw web::json::json_exception(_XPLATSTR("Key not found"));
+                throw web::json::json_exception("Key not found");
             }
 
             return iter->second;
@@ -1222,7 +1226,7 @@ public:
         /// <summary>
         /// Checks if there are any elements in the JSON object.
         /// </summary>
-        /// <returns>True iff empty.</returns>
+        /// <returns>True if empty.</returns>
         bool empty() const
         {
             return m_elements.empty();
@@ -1370,7 +1374,7 @@ public:
         /// <summary>
         /// Converts the JSON number to unsigned int32.
         /// </summary>
-        /// <returns>An usigned int32 representation of the number</returns>
+        /// <returns>An unsigned int32 representation of the number</returns>
         uint32_t to_uint32() const
         {
             if (m_type == double_type)
@@ -1416,7 +1420,7 @@ public:
         /// Compares two JSON numbers for equality.
         /// </summary>
         /// <param name="other">The JSON number to compare with.</param>
-        /// <returns>True iff the numbers are equal.</returns>
+        /// <returns>True if the numbers are equal.</returns>
         bool operator==(const number &other) const
         {
             if (m_type != other.m_type)
@@ -1464,14 +1468,14 @@ public:
             virtual std::unique_ptr<_Value> _copy_value() = 0;
 
             virtual bool has_field(const utility::string_t &) const { return false; }
-            virtual value get_field(const utility::string_t &) const { throw json_exception(_XPLATSTR("not an object")); }
-            virtual value get_element(array::size_type) const { throw json_exception(_XPLATSTR("not an array")); }
+            virtual value get_field(const utility::string_t &) const { throw json_exception("not an object"); }
+            virtual value get_element(array::size_type) const { throw json_exception("not an array"); }
 
-            virtual value &index(const utility::string_t &) { throw json_exception(_XPLATSTR("not an object")); }
-            virtual value &index(array::size_type) { throw json_exception(_XPLATSTR("not an array")); }
+            virtual value &index(const utility::string_t &) { throw json_exception("not an object"); }
+            virtual value &index(array::size_type) { throw json_exception("not an array"); }
 
-            virtual const value &cnst_index(const utility::string_t &) const { throw json_exception(_XPLATSTR("not an object")); }
-            virtual const value &cnst_index(array::size_type) const { throw json_exception(_XPLATSTR("not an array")); }
+            virtual const value &cnst_index(const utility::string_t &) const { throw json_exception("not an object"); }
+            virtual const value &cnst_index(array::size_type) const { throw json_exception("not an array"); }
 
             // Common function used for serialization to strings and streams.
             virtual void serialize_impl(std::string& str) const
@@ -1494,18 +1498,18 @@ public:
 
             virtual json::value::value_type type() const { return json::value::Null; }
 
-            virtual bool is_integer() const { throw json_exception(_XPLATSTR("not a number")); }
-            virtual bool is_double() const { throw json_exception(_XPLATSTR("not a number")); }
+            virtual bool is_integer() const { throw json_exception("not a number"); }
+            virtual bool is_double() const { throw json_exception("not a number"); }
 
-            virtual const json::number& as_number() { throw json_exception(_XPLATSTR("not a number")); }
-            virtual double as_double() const { throw json_exception(_XPLATSTR("not a number")); }
-            virtual int as_integer() const { throw json_exception(_XPLATSTR("not a number")); }
-            virtual bool as_bool() const { throw json_exception(_XPLATSTR("not a boolean")); }
-            virtual json::array& as_array() { throw json_exception(_XPLATSTR("not an array")); }
-            virtual const json::array& as_array() const { throw json_exception(_XPLATSTR("not an array")); }
-            virtual json::object& as_object() { throw json_exception(_XPLATSTR("not an object")); }
-            virtual const json::object& as_object() const { throw json_exception(_XPLATSTR("not an object")); }
-            virtual const utility::string_t& as_string() const { throw json_exception(_XPLATSTR("not a string")); }
+            virtual const json::number& as_number() { throw json_exception("not a number"); }
+            virtual double as_double() const { throw json_exception("not a number"); }
+            virtual int as_integer() const { throw json_exception("not a number"); }
+            virtual bool as_bool() const { throw json_exception("not a boolean"); }
+            virtual json::array& as_array() { throw json_exception("not an array"); }
+            virtual const json::array& as_array() const { throw json_exception("not an array"); }
+            virtual json::object& as_object() { throw json_exception("not an object"); }
+            virtual const json::object& as_object() const { throw json_exception("not an object"); }
+            virtual const utility::string_t& as_string() const { throw json_exception("not a string"); }
 
             virtual size_t size() const { return 0; }
 
@@ -1685,7 +1689,7 @@ public:
 
             utility::string_t m_string;
 
-            // There are significant performance gains that can be made by knowning whether
+            // There are significant performance gains that can be made by knowing whether
             // or not a character that requires escaping is present.
             bool m_has_escape_char;
             static bool has_escape_chars(const _String &str);
@@ -1793,7 +1797,7 @@ public:
                 for(auto iter = m_object.begin(); iter != m_object.end(); ++iter)
                 {
                     reserveSize += iter->first.length() + 2;    // 2 for quotes
-                    size_t valueSize = iter->second.size() * 20; // Multipler by each object/array element
+                    size_t valueSize = iter->second.size() * 20; // Multiply by each object/array element
                     if(valueSize == 0)
                     {
                         if(iter->second.type() == json::value::String)

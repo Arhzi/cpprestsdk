@@ -13,12 +13,30 @@
 
 #pragma once
 
-#ifndef _PPLXTASKS_H
-#define _PPLXTASKS_H
+#ifndef PPLXTASKS_H
+#define PPLXTASKS_H
+
+#include "cpprest/details/cpprest_compat.h"
 
 #if (defined(_MSC_VER) && (_MSC_VER >= 1800)) && !CPPREST_FORCE_PPLX
 #include <ppltasks.h>
 namespace pplx = Concurrency;
+
+namespace Concurrency
+{
+
+/// <summary>
+/// Sets the ambient scheduler to be used by the PPL constructs.
+/// </summary>
+_ASYNCRTIMP void __cdecl set_cpprestsdk_ambient_scheduler(const std::shared_ptr<scheduler_interface>& _Scheduler);
+
+/// <summary>
+/// Gets the ambient scheduler to be used by the PPL constructs
+/// </summary>
+_ASYNCRTIMP const std::shared_ptr<scheduler_interface>& __cdecl get_cpprestsdk_ambient_scheduler();
+
+} // namespace Concurrency
+
 #if (_MSC_VER >= 1900)
 #include <concrt.h>
 namespace Concurrency {
@@ -58,6 +76,7 @@ void cpprest_init(JavaVM*);
 #include <utility>
 #include <exception>
 #include <algorithm>
+#include <atomic>
 
 #if defined(_MSC_VER)
 #include <intrin.h>
@@ -94,9 +113,9 @@ void cpprest_init(JavaVM*);
     #include <uithreadctxt.h>
 #endif  /* _UITHREADCTXT_SUPPORT */
 
-    #pragma detect_mismatch("_PPLTASKS_WITH_WINRT", "1")
+    #pragma detect_mismatch("PPLXTASKS_WITH_WINRT", "1")
 #else /* defined(__cplusplus_winrt) */
-    #pragma detect_mismatch("_PPLTASKS_WITH_WINRT", "0")
+    #pragma detect_mismatch("PPLXTASKS_WITH_WINRT", "0")
 #endif /* defined(__cplusplus_winrt) */
 #endif /* defined(_MSC_VER) */
 
@@ -117,13 +136,13 @@ namespace std
     }
 }
 #endif /* _MSC_VER < 1700 */
-#ifndef _PPLTASK_ASYNC_LOGGING
+#ifndef PPLX_TASK_ASYNC_LOGGING
     #if _MSC_VER >= 1800 && defined(__cplusplus_winrt)
-        #define _PPLTASK_ASYNC_LOGGING 1  // Only enable async logging under dev12 winrt
+        #define PPLX_TASK_ASYNC_LOGGING 1  // Only enable async logging under dev12 winrt
     #else
-        #define _PPLTASK_ASYNC_LOGGING 0
+        #define PPLX_TASK_ASYNC_LOGGING 0
     #endif
-#endif /* !_PPLTASK_ASYNC_LOGGING */
+#endif /* !PPLX_TASK_ASYNC_LOGGING */
 #endif /* _MSC_VER */
 
 #pragma pack(push,_CRT_PACKING)
@@ -166,31 +185,31 @@ template <typename _Type> class task;
 template <> class task<void>;
 
 // In debug builds, default to 10 frames, unless this is overridden prior to #includ'ing ppltasks.h.  In retail builds, default to only one frame.
-#ifndef PPL_TASK_SAVE_FRAME_COUNT
+#ifndef PPLX_TASK_SAVE_FRAME_COUNT
 #ifdef _DEBUG
-#define PPL_TASK_SAVE_FRAME_COUNT 10
+#define PPLX_TASK_SAVE_FRAME_COUNT 10
 #else
-#define PPL_TASK_SAVE_FRAME_COUNT 1
+#define PPLX_TASK_SAVE_FRAME_COUNT 1
 #endif
 #endif
 
 /// <summary>
-/// Helper macro to determine how many stack frames need to be saved. When any number less or equal to 1 is specified, 
+/// Helper macro to determine how many stack frames need to be saved. When any number less or equal to 1 is specified,
 /// only one frame is captured and no stackwalk will be involved. Otherwise, the number of callstack frames will be captured.
 /// </summary>
 /// <ramarks>
 /// This needs to be defined as a macro rather than a function so that if we're only gathering one frame, _ReturnAddress()
 /// will evaluate to client code, rather than a helper function inside of _TaskCreationCallstack, itself.
 /// </remarks>
-#if PPL_TASK_SAVE_FRAME_COUNT > 1
+#if PPLX_TASK_SAVE_FRAME_COUNT > 1
 #if defined(__cplusplus_winrt) && !defined(_DEBUG)
-#pragma message ("WARNING: Redefinning PPL_TASK_SAVE_FRAME_COUNT under Release build for non-desktop applications is not supported; only one frame will be captured!")
-#define _CAPTURE_CALLSTACK() ::pplx::details::_TaskCreationCallstack::_CaptureSingleFrameCallstack(_ReturnAddress())
+#pragma message ("WARNING: Redefining PPLX_TASK_SAVE_FRAME_COUNT under Release build for non-desktop applications is not supported; only one frame will be captured!")
+#define PPLX_CAPTURE_CALLSTACK() ::pplx::details::_TaskCreationCallstack::_CaptureSingleFrameCallstack(_ReturnAddress())
 #else
-#define _CAPTURE_CALLSTACK() ::pplx::details::_TaskCreationCallstack::_CaptureMultiFramesCallstack(PPL_TASK_SAVE_FRAME_COUNT)
+#define PPLX_CAPTURE_CALLSTACK() ::pplx::details::_TaskCreationCallstack::_CaptureMultiFramesCallstack(PPLX_TASK_SAVE_FRAME_COUNT)
 #endif
 #else
-#define _CAPTURE_CALLSTACK() ::pplx::details::_TaskCreationCallstack::_CaptureSingleFrameCallstack(_ReturnAddress())
+#define PPLX_CAPTURE_CALLSTACK() ::pplx::details::_TaskCreationCallstack::_CaptureSingleFrameCallstack(_ReturnAddress())
 #endif
 
 
@@ -209,7 +228,7 @@ template <> class task<void>;
 ///     the <c>canceled</c> state. If you do not respond and continue execution, or return instead of calling
 ///     <c>cancel_current_task</c>, the task will enter the <c>completed</c> state when it is done.
 ///     state.
-///     <para>A task is not cancellable if it was created without a cancellation token.</para>
+///     <para>A task is not cancelable if it was created without a cancellation token.</para>
 /// </remarks>
 /// <seealso cref="task Class"/>
 /// <seealso cref="cancellation_token_source Class"/>
@@ -270,7 +289,7 @@ namespace details
         {
             _TaskCreationCallstack _csc;
             _csc._M_frames.resize(_CaptureFrames);
-            // skip 2 frames to make sure callstack starts from user code 
+            // skip 2 frames to make sure callstack starts from user code
             _csc._M_frames.resize(::pplx::details::platform::CaptureCallstack(&_csc._M_frames[0], 2, _CaptureFrames));
             return _csc;
         }
@@ -439,10 +458,10 @@ namespace details
 
     template<typename _Type>
     task<_Type> _To_task(_Type t);
-    
+
     template<typename _Func>
     task<void> _To_task_void(_Func f);
-    
+
 	struct _BadContinuationParamType{};
 
     template <typename _Function, typename _Type> auto _ReturnTypeHelper(_Type t, _Function _Func, int, int) -> decltype(_Func(_To_task(t)));
@@ -739,7 +758,7 @@ namespace details
             {
                 // We determine the origin of a task continuation by looking at where .then is called, so we can tell whether
                 // to need to marshal the continuation back to the originating apartment. If an STA thread is in executing in
-                // a neutral aparment when it schedules a continuation, we will not marshal continuations back to the STA,
+                // a neutral apartment when it schedules a continuation, we will not marshal continuations back to the STA,
                 // since variables used within a neutral apartment are expected to be apartment neutral.
                 switch(_AptType)
                 {
@@ -871,13 +890,13 @@ namespace details
 
         std::vector<_Type^> Get()
         {
-            // Return vectory<T^> with the objects that are marshaled in the proper appartment
+            // Return vectory<T^> with the objects that are marshaled in the proper apartment
             std::vector<_Type^> _Return;
             _Return.reserve(_Result.size());
 
             for (auto _PTask = _Result.begin(); _PTask != _Result.end(); ++_PTask)
             {
-                _Return.push_back(_PTask->Get()); // Platform::Agile will marshal the object to appropriate appartment if neccessary
+                _Return.push_back(_PTask->Get()); // Platform::Agile will marshal the object to appropriate apartment if necessary
             }
 
             return _Return;
@@ -1128,7 +1147,7 @@ public:
     ///     The default continuation context.
     /// </returns>
     /// <remarks>
-    ///     The default context is used if you don't specifiy a continuation context when you call the <c>then</c> method. In Windows
+    ///     The default context is used if you don't specify a continuation context when you call the <c>then</c> method. In Windows
     ///     applications for Windows 7 and below, as well as desktop applications on Windows 8 and higher, the runtime determines where
     ///     task continuations will execute. However, in a Windows Store app, the default continuation context for a continuation on an
     ///     apartment aware task is the apartment where <c>then</c> is invoked.
@@ -1322,7 +1341,7 @@ public:
           _M_CancellationToken(_TaskOptions.get_cancellation_token()),
           _M_ContinuationContext(_TaskOptions.get_continuation_context()),
           _M_HasCancellationToken(_TaskOptions.has_cancellation_token()),
-          _M_HasScheduler(_TaskOptions.has_scheduler())        
+          _M_HasScheduler(_TaskOptions.has_scheduler())
     {
     }
 
@@ -1430,10 +1449,10 @@ namespace details
 
         // This field gives inlining scheduling policy for current chore.
         _TaskInliningMode_t _M_inliningMode;
-        
+
         virtual _Task_ptr_base _GetTaskImplBase() const = 0;
 
-        _ContinuationTaskHandleBase() : 
+        _ContinuationTaskHandleBase() :
             _M_next(nullptr), _M_continuationContext(task_continuation_context::use_default()), _M_isTaskBasedContinuation(false), _M_inliningMode(details::_NoInline)
         {
         }
@@ -1441,7 +1460,7 @@ namespace details
         virtual ~_ContinuationTaskHandleBase() {}
     };
 
-#if _PPLTASK_ASYNC_LOGGING
+#if PPLX_TASK_ASYNC_LOGGING
     // GUID used for identifying causality logs from PPLTask
     const ::Platform::Guid _PPLTaskCausalityPlatformID(0x7A76B220, 0xA758, 0x4E6E, 0xB0, 0xE0, 0xD7, 0xC6, 0xD7, 0x4A, 0x88, 0xFE);
 
@@ -1464,7 +1483,7 @@ namespace details
             VER_SET_CONDITION( _conditionMask, VER_MAJORVERSION, VER_GREATER_EQUAL );
             VER_SET_CONDITION( _conditionMask, VER_MINORVERSION, VER_GREATER_EQUAL );
 
-            if ( ::VerifyVersionInfo(&_osvi, VER_MAJORVERSION | VER_MINORVERSION, _conditionMask)) 
+            if ( ::VerifyVersionInfo(&_osvi, VER_MAJORVERSION | VER_MINORVERSION, _conditionMask))
             {
                 _causality = 2;
             }
@@ -1479,7 +1498,7 @@ namespace details
 #endif
     }
 
-    // Stateful logger rests inside task_impl_base. 
+    // Stateful logger rests inside task_impl_base.
     struct _TaskEventLogger
     {
         _Task_impl_base *_M_task;
@@ -1491,11 +1510,11 @@ namespace details
         {
             if (details::_IsCausalitySupported())
             {
-                ::Windows::Foundation::Diagnostics::AsyncCausalityTracer::TraceOperationCreation(::Windows::Foundation::Diagnostics::CausalityTraceLevel::Required, ::Windows::Foundation::Diagnostics::CausalitySource::Library, 
-                    _PPLTaskCausalityPlatformID, reinterpret_cast<unsigned long long>(_M_task), 
+                ::Windows::Foundation::Diagnostics::AsyncCausalityTracer::TraceOperationCreation(::Windows::Foundation::Diagnostics::CausalityTraceLevel::Required, ::Windows::Foundation::Diagnostics::CausalitySource::Library,
+                    _PPLTaskCausalityPlatformID, reinterpret_cast<unsigned long long>(_M_task),
                     _isContinuation ? "pplx::PPLTask::ScheduleContinuationTask" : "pplx::PPLTask::ScheduleTask", 0);
                 _M_scheduled = true;
-            } 
+            }
         }
 
         // It will log the cancel event but not canceled state. _LogTaskCompleted will log the terminal state, which includes cancel state.
@@ -1506,7 +1525,7 @@ namespace details
                 ::Windows::Foundation::Diagnostics::AsyncCausalityTracer::TraceOperationRelation(::Windows::Foundation::Diagnostics::CausalityTraceLevel::Important, ::Windows::Foundation::Diagnostics::CausalitySource::Library,
                     _PPLTaskCausalityPlatformID, reinterpret_cast<unsigned long long>(_M_task), ::Windows::Foundation::Diagnostics::CausalityRelation::Cancel);
 
-            } 
+            }
         }
 
         // Log when task reaches terminal state. Note: the task can reach a terminal state (by cancellation or exception) without having run
@@ -1548,7 +1567,7 @@ namespace details
                 _M_taskPostEventStarted = true;
             }
         }
-        
+
         _TaskEventLogger(_Task_impl_base *_task): _M_task(_task)
         {
             _M_scheduled = false;
@@ -1613,7 +1632,7 @@ namespace details
         {
         }
 
-        virtual ~_PPLTaskHandle() 
+        virtual ~_PPLTaskHandle()
         {
             // Here is the sink of all task completion code paths
             _M_pTask->_M_taskEventLogger._LogTaskCompleted();
@@ -1690,13 +1709,13 @@ namespace details
 #pragma warning(push)
 #pragma warning(disable: 4355)
 #endif
-        _Task_impl_base(_CancellationTokenState * _PTokenState, scheduler_ptr _Scheduler_arg) 
+        _Task_impl_base(_CancellationTokenState * _PTokenState, scheduler_ptr _Scheduler_arg)
                           : _M_TaskState(_Created),
                             _M_fFromAsync(false), _M_fUnwrappedTask(false),
                             _M_pRegistration(nullptr), _M_Continuations(nullptr), _M_TaskCollection(_Scheduler_arg),
-                            _M_taskEventLogger(this)                           
+                            _M_taskEventLogger(this)
         {
-            // Set cancelation token
+            // Set cancellation token
             _M_pTokenState = _PTokenState;
             _ASSERTE(_M_pTokenState != nullptr);
             if (_M_pTokenState != _CancellationTokenState::_None())
@@ -1731,7 +1750,7 @@ namespace details
                 else
                 {
                     // Task Continuations are 'scheduled' *inside* the chore that is executing on the ancestors's task group. If a continuation
-                    // needs to be marshalled to a different apartment, instead of scheduling, we make a synchronous cross apartment COM
+                    // needs to be marshaled to a different apartment, instead of scheduling, we make a synchronous cross apartment COM
                     // call to execute the continuation. If it then happens to do something which waits on the ancestor (say it calls .get(), which
                     // task based continuations are wont to do), waiting on the task group results in on the chore that is making this
                     // synchronous callback, which causes a deadlock. To avoid this, we test the state ancestor's event , and we will NOT wait on
@@ -1761,8 +1780,8 @@ namespace details
                         // call to wait will receive this status. However, both cancellation and exceptions flowing through
                         // tasks set state in the task impl itself.
 
-                        // When it returns cancelled, either work chore or the cancel thread should already have set task's state
-                        // properly -- cancelled state or completed state (because there was no interruption point).
+                        // When it returns canceled, either work chore or the cancel thread should already have set task's state
+                        // properly -- canceled state or completed state (because there was no interruption point).
                         // For tasks with unwrapped tasks, we should not change the state of current task, since the unwrapped task are still running.
                         _M_TaskCollection._RunAndWait();
                     }
@@ -2041,7 +2060,7 @@ namespace details
         // Schedule a continuation to run
         void _ScheduleContinuationTask(_ContinuationTaskHandleBase * _PTaskHandle)
         {
-            
+
             _M_taskEventLogger._LogScheduleTask(true);
             // Ensure that the continuation runs in proper context (this might be on a Concurrency Runtime thread or in a different Windows Runtime apartment)
             if (_PTaskHandle->_M_continuationContext._HasCapturedContext())
@@ -2227,7 +2246,7 @@ namespace details
             }
 
 #if _UITHREADCTXT_SUPPORT
-            // This method is used to throw an exepection in _Wait() if called within STA.  We
+            // This method is used to throw an exception in _Wait() if called within STA.  We
             // want the same behavior if _Wait is called on the UI thread.
             if (SUCCEEDED(CaptureUiThreadContext(nullptr)))
             {
@@ -2286,11 +2305,11 @@ namespace details
         static void _AsyncInit(const typename _Task_ptr<_ReturnType>::_Type& _OuterTask, const task<_InternalReturnType> & _UnwrappedTask)
         {
             _ASSERTE(_OuterTask->_M_fUnwrappedTask && !_OuterTask->_IsCanceled());
-                       
+
             //
             // We must ensure that continuations off _OuterTask (especially exception handling ones) continue to function in the
             // presence of an exception flowing out of the inner task _UnwrappedTask. This requires an exception handling continuation
-            // off the inner task which does the appropriate funnelling to the outer one. We use _Then instead of then to prevent
+            // off the inner task which does the appropriate funneling to the outer one. We use _Then instead of then to prevent
             // the exception from being marked as observed by our internal continuation. This continuation must be scheduled regardless
             // of whether or not the _OuterTask task is canceled.
             //
@@ -2324,7 +2343,7 @@ namespace details
         }
 
         // Tracks the internal state of the task
-        volatile _TaskInternalState _M_TaskState;
+        std::atomic<_TaskInternalState> _M_TaskState;
         // Set to true either if the ancestor task had the flag set to true, or if the lambda that does the work of this task returns an
         // async operation or async action that is unwrapped by the runtime.
         bool _M_fFromAsync;
@@ -2360,7 +2379,7 @@ namespace details
         _Task_impl_base const & operator=(_Task_impl_base const&);
     };
 
-#if _PPLTASK_ASYNC_LOGGING
+#if PPLX_TASK_ASYNC_LOGGING
     inline void _TaskEventLogger::_LogTaskCompleted()
     {
         if (_M_scheduled)
@@ -2381,7 +2400,7 @@ namespace details
         }
     }
 #endif
-    
+
     /// <summary>
     ///     The implementation of a first-class task. This structure contains the task group used to execute
     ///     the task function and handles the scheduling. The _Task_impl is created as a shared_ptr
@@ -2431,7 +2450,7 @@ namespace details
 
                     if (_M_TaskState == _Canceled)
                     {
-                        // If the task has finished cancelling there should not be any continuation records in the array.
+                        // If the task has finished canceling there should not be any continuation records in the array.
                         return false;
                     }
                     else
@@ -2455,7 +2474,7 @@ namespace details
                 if (_SynchronousCancel)
                 {
                     // Be aware that this set must be done BEFORE _M_Scheduled being set, or race will happen between this and wait()
-                    _M_TaskState = _Canceled;                    
+                    _M_TaskState = _Canceled;
                     // Cancellation completes the task, so all dependent tasks must be run to cancel them
                     // They are canceled when they begin running (see _RunContinuation) and see that their
                     // ancestor has been canceled.
@@ -2485,7 +2504,7 @@ namespace details
                     _M_taskEventLogger._LogCancelTask();
                 }
 
-                
+
             }
 
             // Only execute continuations and mark the task as completed if we were able to move the task to the _Canceled state.
@@ -2563,7 +2582,7 @@ namespace details
 
         // Return true if the task has reached a terminal state
         bool _IsDone()
-        {     
+        {
             return _IsCompleted() || _IsCanceled();
         }
 
@@ -2613,9 +2632,9 @@ namespace details
         _TaskList                           _M_tasks;
         ::pplx::extensibility::critical_section_t             _M_taskListCritSec;
         _ResultHolder<_ResultType>         _M_value;
-        std::shared_ptr<_ExceptionHolder>   _M_exceptionHolder;
-        bool                                _M_fHasValue;
-        bool                                _M_fIsCanceled;
+        std::shared_ptr<_ExceptionHolder>  _M_exceptionHolder;
+        std::atomic<bool>                  _M_fHasValue;
+        std::atomic<bool>                  _M_fIsCanceled;
     };
 
     // Utility method for dealing with void functions
@@ -2667,8 +2686,8 @@ public:
     ///     Constructs a <c>task_completion_event</c> object.
     /// </summary>
     /**/
-    task_completion_event() 
-        : _M_Impl(std::make_shared<details::_Task_completion_event_impl<_ResultType>>()) 
+    task_completion_event()
+        : _M_Impl(std::make_shared<details::_Task_completion_event_impl<_ResultType>>())
     {
     }
 
@@ -2715,7 +2734,7 @@ public:
         {
             for( auto _TaskIt = _Tasks.begin(); _TaskIt != _Tasks.end(); ++_TaskIt )
             {
-                // If current task was cancelled by a cancellation_token, it would be in cancel pending state.
+                // If current task was canceled by a cancellation_token, it would be in cancel pending state.
                 if ((*_TaskIt)->_IsPendingCancel())
                     (*_TaskIt)->_Cancel(true);
                 else
@@ -2740,8 +2759,8 @@ public:
     __declspec(noinline) // Ask for no inlining so that the _ReturnAddress intrinsic gives us the expected result
     bool set_exception(_E _Except) const // 'const' (even though it's not deep) allows to safely pass events by value into lambdas
     {
-        // It is important that _CAPTURE_CALLSTACK() evaluate to the instruction after the call instruction for set_exception.
-        return _Cancel(std::make_exception_ptr(_Except), _CAPTURE_CALLSTACK());
+        // It is important that PPLX_CAPTURE_CALLSTACK() evaluate to the instruction after the call instruction for set_exception.
+        return _Cancel(std::make_exception_ptr(_Except), PPLX_CAPTURE_CALLSTACK());
     }
 
     /// <summary>
@@ -2751,11 +2770,11 @@ public:
     ///     The exception_ptr that indicates the exception to set this event with.
     /// </param>
     /**/
-    __declspec(noinline) // Ask for no inlining so that the _CAPTURE_CALLSTACK gives us the expected result
+    __declspec(noinline) // Ask for no inlining so that the PPLX_CAPTURE_CALLSTACK gives us the expected result
     bool set_exception(std::exception_ptr _ExceptionPtr) const // 'const' (even though it's not deep) allows to safely pass events by value into lambdas
     {
-        // It is important that _CAPTURE_CALLSTACK() evaluate to the instruction after the call instruction for set_exception.
-        return _Cancel(_ExceptionPtr, _CAPTURE_CALLSTACK());
+        // It is important that PPLX_CAPTURE_CALLSTACK() evaluate to the instruction after the call instruction for set_exception.
+        return _Cancel(_ExceptionPtr, PPLX_CAPTURE_CALLSTACK());
     }
 
     /// <summary>
@@ -2945,7 +2964,7 @@ public:
     __declspec(noinline) // Ask for no inlining so that the _ReturnAddress intrinsic gives us the expected result
     bool set_exception(_E _Except) const // 'const' (even though it's not deep) allows to safely pass events by value into lambdas
     {
-        return _M_unitEvent._Cancel(std::make_exception_ptr(_Except), _CAPTURE_CALLSTACK());
+        return _M_unitEvent._Cancel(std::make_exception_ptr(_Except), PPLX_CAPTURE_CALLSTACK());
     }
 
     /// <summary>
@@ -2955,11 +2974,11 @@ public:
     ///     The exception_ptr that indicates the exception to set this event with.
     /// </param>
     /**/
-    __declspec(noinline) // Ask for no inlining so that the _CAPTURE_CALLSTACK intrinsic gives us the expected result
+    __declspec(noinline) // Ask for no inlining so that the PPLX_CAPTURE_CALLSTACK intrinsic gives us the expected result
     bool set_exception(std::exception_ptr _ExceptionPtr) const // 'const' (even though it's not deep) allows to safely pass events by value into lambdas
     {
-        // It is important that _CAPTURE_CALLSTACK() evaluate to the instruction after the call instruction for set_exception.
-        return _M_unitEvent._Cancel(_ExceptionPtr, _CAPTURE_CALLSTACK());
+        // It is important that PPLX_CAPTURE_CALLSTACK() evaluate to the instruction after the call instruction for set_exception.
+        return _M_unitEvent._Cancel(_ExceptionPtr, PPLX_CAPTURE_CALLSTACK());
     }
 
     /// <summary>
@@ -3227,8 +3246,8 @@ public:
     ///     <c>cancellation_token_source</c> the token was obtained from. Tasks created without a cancellation token are not cancelable.</para>
     ///     <para>Tasks created from a <c>Windows::Foundation::IAsyncInfo</c> interface or a lambda that returns an <c>IAsyncInfo</c> interface
     ///     reach their terminal state when the enclosed Windows Runtime asynchronous operation or action completes. Similarly, tasks created
-    ///     from a lamda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
-    ///     and not when the lamda returns.</para>
+    ///     from a lambda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
+    ///     and not when the lambda returns.</para>
     ///     <para><c>task</c> behaves like a smart pointer and is safe to pass around by value. It can be accessed by multiple threads
     ///     without the need for locks.</para>
     ///     <para>The constructor overloads that take a Windows::Foundation::IAsyncInfo interface or a lambda returning such an interface, are only available
@@ -3268,8 +3287,8 @@ public:
     ///     <c>cancellation_token_source</c> the token was obtained from. Tasks created without a cancellation token are not cancelable.</para>
     ///     <para>Tasks created from a <c>Windows::Foundation::IAsyncInfo</c> interface or a lambda that returns an <c>IAsyncInfo</c> interface
     ///     reach their terminal state when the enclosed Windows Runtime asynchronous operation or action completes. Similarly, tasks created
-    ///     from a lamda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
-    ///     and not when the lamda returns.</para>
+    ///     from a lambda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
+    ///     and not when the lambda returns.</para>
     ///     <para><c>task</c> behaves like a smart pointer and is safe to pass around by value. It can be accessed by multiple threads
     ///     without the need for locks.</para>
     ///     <para>The constructor overloads that take a Windows::Foundation::IAsyncInfo interface or a lambda returning such an interface, are only available
@@ -3278,15 +3297,15 @@ public:
     /// </remarks>
     /**/
     template<typename _Ty>
-    __declspec(noinline) // Ask for no inlining so that the _CAPTURE_CALLSTACK gives us the expected result
+    __declspec(noinline) // Ask for no inlining so that the PPLX_CAPTURE_CALLSTACK gives us the expected result
     explicit task(_Ty _Param)
     {
         task_options _TaskOptions;
         details::_ValidateTaskConstructorArgs<_ReturnType,_Ty>(_Param);
 
         _CreateImpl(_TaskOptions.get_cancellation_token()._GetImplValue(), _TaskOptions.get_scheduler());
-        // Do not move the next line out of this function. It is important that _CAPTURE_CALLSTACK() evaluate to the the call site of the task constructor.
-        _SetTaskCreationCallstack(_CAPTURE_CALLSTACK());
+        // Do not move the next line out of this function. It is important that PPLX_CAPTURE_CALLSTACK() evaluate to the the call site of the task constructor.
+        _SetTaskCreationCallstack(PPLX_CAPTURE_CALLSTACK());
 
         _TaskInitMaybeFunctor(_Param, details::_IsCallable(_Param,0));
     }
@@ -3316,8 +3335,8 @@ public:
     ///     <c>cancellation_token_source</c> the token was obtained from. Tasks created without a cancellation token are not cancelable.</para>
     ///     <para>Tasks created from a <c>Windows::Foundation::IAsyncInfo</c> interface or a lambda that returns an <c>IAsyncInfo</c> interface
     ///     reach their terminal state when the enclosed Windows Runtime asynchronous operation or action completes. Similarly, tasks created
-    ///     from a lamda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
-    ///     and not when the lamda returns.</para>
+    ///     from a lambda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
+    ///     and not when the lambda returns.</para>
     ///     <para><c>task</c> behaves like a smart pointer and is safe to pass around by value. It can be accessed by multiple threads
     ///     without the need for locks.</para>
     ///     <para>The constructor overloads that take a Windows::Foundation::IAsyncInfo interface or a lambda returning such an interface, are only available
@@ -3326,15 +3345,15 @@ public:
     /// </remarks>
     /**/
     template<typename _Ty>
-    __declspec(noinline) // Ask for no inlining so that the _CAPTURE_CALLSTACK gives us the expected result
+    __declspec(noinline) // Ask for no inlining so that the PPLX_CAPTURE_CALLSTACK gives us the expected result
     explicit task(_Ty _Param, const task_options &_TaskOptions)
     {
         details::_ValidateTaskConstructorArgs<_ReturnType,_Ty>(_Param);
 
         _CreateImpl(_TaskOptions.get_cancellation_token()._GetImplValue(), _TaskOptions.get_scheduler());
-        // Do not move the next line out of this function. It is important that _CAPTURE_CALLSTACK() evaluate to the the call site of the task constructor.
-        _SetTaskCreationCallstack(details::_get_internal_task_options(_TaskOptions)._M_hasPresetCreationCallstack ? details::_get_internal_task_options(_TaskOptions)._M_presetCreationCallstack : _CAPTURE_CALLSTACK());
-        
+        // Do not move the next line out of this function. It is important that PPLX_CAPTURE_CALLSTACK() evaluate to the the call site of the task constructor.
+        _SetTaskCreationCallstack(details::_get_internal_task_options(_TaskOptions)._M_hasPresetCreationCallstack ? details::_get_internal_task_options(_TaskOptions)._M_presetCreationCallstack : PPLX_CAPTURE_CALLSTACK());
+
         _TaskInitMaybeFunctor(_Param, details::_IsCallable(_Param,0));
     }
 
@@ -3354,8 +3373,8 @@ public:
     ///     <c>cancellation_token_source</c> the token was obtained from. Tasks created without a cancellation token are not cancelable.</para>
     ///     <para>Tasks created from a <c>Windows::Foundation::IAsyncInfo</c> interface or a lambda that returns an <c>IAsyncInfo</c> interface
     ///     reach their terminal state when the enclosed Windows Runtime asynchronous operation or action completes. Similarly, tasks created
-    ///     from a lamda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
-    ///     and not when the lamda returns.</para>
+    ///     from a lambda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
+    ///     and not when the lambda returns.</para>
     ///     <para><c>task</c> behaves like a smart pointer and is safe to pass around by value. It can be accessed by multiple threads
     ///     without the need for locks.</para>
     ///     <para>The constructor overloads that take a Windows::Foundation::IAsyncInfo interface or a lambda returning such an interface, are only available
@@ -3381,8 +3400,8 @@ public:
     ///     <c>cancellation_token_source</c> the token was obtained from. Tasks created without a cancellation token are not cancelable.</para>
     ///     <para>Tasks created from a <c>Windows::Foundation::IAsyncInfo</c> interface or a lambda that returns an <c>IAsyncInfo</c> interface
     ///     reach their terminal state when the enclosed Windows Runtime asynchronous operation or action completes. Similarly, tasks created
-    ///     from a lamda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
-    ///     and not when the lamda returns.</para>
+    ///     from a lambda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
+    ///     and not when the lambda returns.</para>
     ///     <para><c>task</c> behaves like a smart pointer and is safe to pass around by value. It can be accessed by multiple threads
     ///     without the need for locks.</para>
     ///     <para>The constructor overloads that take a Windows::Foundation::IAsyncInfo interface or a lambda returning such an interface, are only available
@@ -3453,11 +3472,11 @@ public:
     /// </remarks>
     /**/
     template<typename _Function>
-    __declspec(noinline) // Ask for no inlining so that the _CAPTURE_CALLSTACK gives us the expected result
+    __declspec(noinline) // Ask for no inlining so that the PPLX_CAPTURE_CALLSTACK gives us the expected result
     auto then(_Function&& _Func) const -> typename details::_ContinuationTypeTraits<_Function, _ReturnType>::_TaskOfType
     {
         task_options _TaskOptions;
-        details::_get_internal_task_options(_TaskOptions)._set_creation_callstack(_CAPTURE_CALLSTACK());
+        details::_get_internal_task_options(_TaskOptions)._set_creation_callstack(PPLX_CAPTURE_CALLSTACK());
         return _ThenImpl<_ReturnType, _Function>(std::forward<_Function>(_Func), _TaskOptions);
     }
 
@@ -3486,10 +3505,10 @@ public:
     /// </remarks>
     /**/
     template<typename _Function>
-    __declspec(noinline) // Ask for no inlining so that the _CAPTURE_CALLSTACK gives us the expected result
+    __declspec(noinline) // Ask for no inlining so that the PPLX_CAPTURE_CALLSTACK gives us the expected result
     auto then(_Function&& _Func, task_options _TaskOptions) const -> typename details::_ContinuationTypeTraits<_Function, _ReturnType>::_TaskOfType
     {
-        details::_get_internal_task_options(_TaskOptions)._set_creation_callstack(_CAPTURE_CALLSTACK());
+        details::_get_internal_task_options(_TaskOptions)._set_creation_callstack(PPLX_CAPTURE_CALLSTACK());
         return _ThenImpl<_ReturnType, _Function>(std::forward<_Function>(_Func), _TaskOptions);
     }
 
@@ -3522,11 +3541,11 @@ public:
     /// </remarks>
     /**/
     template<typename _Function>
-    __declspec(noinline) // Ask for no inlining so that the _CAPTURE_CALLSTACK gives us the expected result
+    __declspec(noinline) // Ask for no inlining so that the PPLX_CAPTURE_CALLSTACK gives us the expected result
     auto then(_Function&& _Func, cancellation_token _CancellationToken, task_continuation_context _ContinuationContext) const -> typename details::_ContinuationTypeTraits<_Function, _ReturnType>::_TaskOfType
     {
         task_options _TaskOptions(_CancellationToken, _ContinuationContext);
-        details::_get_internal_task_options(_TaskOptions)._set_creation_callstack(_CAPTURE_CALLSTACK());
+        details::_get_internal_task_options(_TaskOptions)._set_creation_callstack(PPLX_CAPTURE_CALLSTACK());
         return _ThenImpl<_ReturnType, _Function>(std::forward<_Function>(_Func), _TaskOptions);
     }
 
@@ -3570,7 +3589,7 @@ public:
 
         if (_M_Impl->_Wait() == canceled)
         {
-            throw task_canceled();  
+            throw task_canceled();
         }
 
         return _M_Impl->_GetResult();
@@ -3673,7 +3692,7 @@ public:
     }
 
     /// <summary>
-    ///     Set the implementation of the task to be the supplied implementaion.
+    ///     Set the implementation of the task to be the supplied implementation.
     /// </summary>
     void _SetImpl(const typename details::_Task_ptr<_ReturnType>::_Type & _Impl)
     {
@@ -3682,7 +3701,7 @@ public:
     }
 
     /// <summary>
-    ///     Set the implementation of the task to be the supplied implementaion using a move instead of a copy.
+    ///     Set the implementation of the task to be the supplied implementation using a move instead of a copy.
     /// </summary>
     void _SetImpl(typename details::_Task_ptr<_ReturnType>::_Type && _Impl)
     {
@@ -3712,22 +3731,22 @@ public:
     ///     This function is Used for runtime internal continuations only.
     /// </summary>
     template<typename _Function>
-    auto _Then(_Function&& _Func, details::_CancellationTokenState *_PTokenState, 
+    auto _Then(_Function&& _Func, details::_CancellationTokenState *_PTokenState,
         details::_TaskInliningMode_t _InliningMode = details::_ForceInline) const -> typename details::_ContinuationTypeTraits<_Function, _ReturnType>::_TaskOfType
     {
         // inherit from antecedent
         auto _Scheduler = _GetImpl()->_GetScheduler();
 
-        return _ThenImpl<_ReturnType, _Function>(std::forward<_Function>(_Func), _PTokenState, task_continuation_context::use_default(), _Scheduler, _CAPTURE_CALLSTACK(), _InliningMode);
+        return _ThenImpl<_ReturnType, _Function>(std::forward<_Function>(_Func), _PTokenState, task_continuation_context::use_default(), _Scheduler, PPLX_CAPTURE_CALLSTACK(), _InliningMode);
     }
 
 private:
     template <typename T> friend class task;
 
-     
+
     // The task handle type used to construct an 'initial task' - a task with no dependents.
     template <typename _InternalReturnType, typename _Function, typename _TypeSelection>
-    struct _InitialTaskHandle : 
+    struct _InitialTaskHandle :
         details::_PPLTaskHandle<_ReturnType, _InitialTaskHandle<_InternalReturnType, _Function, _TypeSelection>, details::_UnrealizedChore_t>
     {
         _Function _M_function;
@@ -3768,7 +3787,7 @@ private:
         }
 
         //
-        // Overload 1: returns IAsyncOperation<_InternalReturnType>^ (only uder /ZW)
+        // Overload 1: returns IAsyncOperation<_InternalReturnType>^ (only under /ZW)
         //                   or
         //             returns task<_InternalReturnType>
         //
@@ -3813,7 +3832,7 @@ private:
         {
             typedef details::_GetProgressType<decltype(_M_function())>::_Value _ProgressType;
 
-            details::_Task_impl_base::_AsyncInit<_ReturnType, _InternalReturnType>(this->_M_pTask, 
+            details::_Task_impl_base::_AsyncInit<_ReturnType, _InternalReturnType>(this->_M_pTask,
                 ref new details::_IAsyncActionWithProgressToAsyncOperationConverter<_ProgressType>(_LogWorkItemAndInvokeUserLambda(_M_function)));
         }
 #endif  /* defined (__cplusplus_winrt) */
@@ -3892,7 +3911,7 @@ private:
         }
 
         //
-        // Overload 0-1: _InternalReturnType -> IAsyncOperation<_TaskType>^ (only uder /ZW)
+        // Overload 0-1: _InternalReturnType -> IAsyncOperation<_TaskType>^ (only under /ZW)
         //               or
         //               _InternalReturnType -> task<_TaskType>
         //
@@ -3904,7 +3923,7 @@ private:
             typedef typename details::_FunctionTypeTraits<_Function, _InternalReturnType>::_FuncRetType _FuncOutputType;
 
             details::_Task_impl_base::_AsyncInit<_NormalizedContinuationReturnType, _ContinuationReturnType>(
-                this->_M_pTask, 
+                this->_M_pTask,
                 _LogWorkItemAndInvokeUserLambda(_Continuation_func_transformer<_InternalReturnType, _FuncOutputType>::_Perform(_M_function), _M_ancestorTaskImpl->_GetResult())
             );
         }
@@ -3989,7 +4008,7 @@ private:
             // The continuation takes a parameter of type task<_Input>, which is the same as the ancestor task.
             task<_InternalReturnType> _ResultTask;
             _ResultTask._SetImpl(std::move(_M_ancestorTaskImpl));
-            details::_Task_impl_base::_AsyncInit<_NormalizedContinuationReturnType, _ContinuationReturnType>(this->_M_pTask, 
+            details::_Task_impl_base::_AsyncInit<_NormalizedContinuationReturnType, _ContinuationReturnType>(this->_M_pTask,
                 _LogWorkItemAndInvokeUserLambda(_M_function, std::move(_ResultTask)));
         }
 
@@ -4223,8 +4242,8 @@ public:
     ///     <c>cancellation_token_source</c> the token was obtained from. Tasks created without a cancellation token are not cancelable.</para>
     ///     <para>Tasks created from a <c>Windows::Foundation::IAsyncInfo</c> interface or a lambda that returns an <c>IAsyncInfo</c> interface
     ///     reach their terminal state when the enclosed Windows Runtime asynchronous operation or action completes. Similarly, tasks created
-    ///     from a lamda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
-    ///     and not when the lamda returns.</para>
+    ///     from a lambda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
+    ///     and not when the lambda returns.</para>
     ///     <para><c>task</c> behaves like a smart pointer and is safe to pass around by value. It can be accessed by multiple threads
     ///     without the need for locks.</para>
     ///     <para>The constructor overloads that take a Windows::Foundation::IAsyncInfo interface or a lambda returning such an interface, are only available
@@ -4260,8 +4279,8 @@ public:
     ///     <c>cancellation_token_source</c> the token was obtained from. Tasks created without a cancellation token are not cancelable.</para>
     ///     <para>Tasks created from a <c>Windows::Foundation::IAsyncInfo</c> interface or a lambda that returns an <c>IAsyncInfo</c> interface
     ///     reach their terminal state when the enclosed Windows Runtime asynchronous operation or action completes. Similarly, tasks created
-    ///     from a lamda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
-    ///     and not when the lamda returns.</para>
+    ///     from a lambda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
+    ///     and not when the lambda returns.</para>
     ///     <para><c>task</c> behaves like a smart pointer and is safe to pass around by value. It can be accessed by multiple threads
     ///     without the need for locks.</para>
     ///     <para>The constructor overloads that take a Windows::Foundation::IAsyncInfo interface or a lambda returning such an interface, are only available
@@ -4270,14 +4289,14 @@ public:
     /// </remarks>
     /**/
     template<typename _Ty>
-    __declspec(noinline) // Ask for no inlining so that the _CAPTURE_CALLSTACK gives us the expected result
+    __declspec(noinline) // Ask for no inlining so that the PPLX_CAPTURE_CALLSTACK gives us the expected result
     explicit task(_Ty _Param, const task_options& _TaskOptions = task_options())
     {
         details::_ValidateTaskConstructorArgs<void,_Ty>(_Param);
 
         _M_unitTask._CreateImpl(_TaskOptions.get_cancellation_token()._GetImplValue(), _TaskOptions.get_scheduler());
-        // Do not move the next line out of this function. It is important that _CAPTURE_CALLSTACK() evaluate to the the call site of the task constructor.
-        _M_unitTask._SetTaskCreationCallstack(details::_get_internal_task_options(_TaskOptions)._M_hasPresetCreationCallstack ? details::_get_internal_task_options(_TaskOptions)._M_presetCreationCallstack : _CAPTURE_CALLSTACK());
+        // Do not move the next line out of this function. It is important that PPLX_CAPTURE_CALLSTACK() evaluate to the the call site of the task constructor.
+        _M_unitTask._SetTaskCreationCallstack(details::_get_internal_task_options(_TaskOptions)._M_hasPresetCreationCallstack ? details::_get_internal_task_options(_TaskOptions)._M_presetCreationCallstack : PPLX_CAPTURE_CALLSTACK());
 
         _TaskInitMaybeFunctor(_Param, details::_IsCallable(_Param,0));
     }
@@ -4298,8 +4317,8 @@ public:
     ///     <c>cancellation_token_source</c> the token was obtained from. Tasks created without a cancellation token are not cancelable.</para>
     ///     <para>Tasks created from a <c>Windows::Foundation::IAsyncInfo</c> interface or a lambda that returns an <c>IAsyncInfo</c> interface
     ///     reach their terminal state when the enclosed Windows Runtime asynchronous operation or action completes. Similarly, tasks created
-    ///     from a lamda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
-    ///     and not when the lamda returns.</para>
+    ///     from a lambda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
+    ///     and not when the lambda returns.</para>
     ///     <para><c>task</c> behaves like a smart pointer and is safe to pass around by value. It can be accessed by multiple threads
     ///     without the need for locks.</para>
     ///     <para>The constructor overloads that take a Windows::Foundation::IAsyncInfo interface or a lambda returning such an interface, are only available
@@ -4325,8 +4344,8 @@ public:
     ///     <c>cancellation_token_source</c> the token was obtained from. Tasks created without a cancellation token are not cancelable.</para>
     ///     <para>Tasks created from a <c>Windows::Foundation::IAsyncInfo</c> interface or a lambda that returns an <c>IAsyncInfo</c> interface
     ///     reach their terminal state when the enclosed Windows Runtime asynchronous operation or action completes. Similarly, tasks created
-    ///     from a lamda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
-    ///     and not when the lamda returns.</para>
+    ///     from a lambda that returns a <c>task&lt;result_type&gt;</c> reach their terminal state when the inner task reaches its terminal state,
+    ///     and not when the lambda returns.</para>
     ///     <para><c>task</c> behaves like a smart pointer and is safe to pass around by value. It can be accessed by multiple threads
     ///     without the need for locks.</para>
     ///     <para>The constructor overloads that take a Windows::Foundation::IAsyncInfo interface or a lambda returning such an interface, are only available
@@ -4401,10 +4420,10 @@ public:
     /// </remarks>
     /**/
     template<typename _Function>
-    __declspec(noinline) // Ask for no inlining so that the _CAPTURE_CALLSTACK gives us the expected result
+    __declspec(noinline) // Ask for no inlining so that the PPLX_CAPTURE_CALLSTACK gives us the expected result
     auto then(_Function&& _Func, task_options _TaskOptions = task_options()) const -> typename details::_ContinuationTypeTraits<_Function, void>::_TaskOfType
     {
-        details::_get_internal_task_options(_TaskOptions)._set_creation_callstack(_CAPTURE_CALLSTACK());
+        details::_get_internal_task_options(_TaskOptions)._set_creation_callstack(PPLX_CAPTURE_CALLSTACK());
         return _M_unitTask._ThenImpl<void, _Function>(std::forward<_Function>(_Func), _TaskOptions);
     }
 
@@ -4437,11 +4456,11 @@ public:
     /// </remarks>
     /**/
     template<typename _Function>
-    __declspec(noinline) // Ask for no inlining so that the _CAPTURE_CALLSTACK gives us the expected result
+    __declspec(noinline) // Ask for no inlining so that the PPLX_CAPTURE_CALLSTACK gives us the expected result
     auto then(_Function&& _Func, cancellation_token _CancellationToken, task_continuation_context _ContinuationContext) const -> typename details::_ContinuationTypeTraits<_Function, void>::_TaskOfType
     {
         task_options _TaskOptions(_CancellationToken, _ContinuationContext);
-        details::_get_internal_task_options(_TaskOptions)._set_creation_callstack(_CAPTURE_CALLSTACK());
+        details::_get_internal_task_options(_TaskOptions)._set_creation_callstack(PPLX_CAPTURE_CALLSTACK());
         return _M_unitTask._ThenImpl<void, _Function>(std::forward<_Function>(_Func), _TaskOptions);
     }
 
@@ -4551,7 +4570,7 @@ public:
     }
 
     /// <summary>
-    ///     Set the implementation of the task to be the supplied implementaion.
+    ///     Set the implementation of the task to be the supplied implementation.
     /// </summary>
     void _SetImpl(const details::_Task_ptr<details::_Unit_type>::_Type & _Impl)
     {
@@ -4559,7 +4578,7 @@ public:
     }
 
     /// <summary>
-    ///     Set the implementation of the task to be the supplied implementaion using a move instead of a copy.
+    ///     Set the implementation of the task to be the supplied implementation using a move instead of a copy.
     /// </summary>
     void _SetImpl(details::_Task_ptr<details::_Unit_type>::_Type && _Impl)
     {
@@ -4586,13 +4605,13 @@ public:
     ///     An internal version of then that takes additional flags and executes the continuation inline. Used for runtime internal continuations only.
     /// </summary>
     template<typename _Function>
-    auto _Then(_Function&& _Func, details::_CancellationTokenState *_PTokenState, 
+    auto _Then(_Function&& _Func, details::_CancellationTokenState *_PTokenState,
         details::_TaskInliningMode_t _InliningMode = details::_ForceInline) const -> typename details::_ContinuationTypeTraits<_Function, void>::_TaskOfType
     {
         // inherit from antecedent
         auto _Scheduler = _GetImpl()->_GetScheduler();
 
-        return _M_unitTask._ThenImpl<void, _Function>(std::forward<_Function>(_Func), _PTokenState, task_continuation_context::use_default(), _Scheduler, _CAPTURE_CALLSTACK(), _InliningMode);
+        return _M_unitTask._ThenImpl<void, _Function>(std::forward<_Function>(_Func), _PTokenState, task_continuation_context::use_default(), _Scheduler, PPLX_CAPTURE_CALLSTACK(), _InliningMode);
     }
 
 private:
@@ -4672,7 +4691,7 @@ namespace details
     template<typename _Ty>
     _Ty _GetUnwrappedType(task<_Ty>);
 
-    // Unwrap all supportted types
+    // Unwrap all supported types
     template<typename _Ty>
     auto _GetUnwrappedReturnType(_Ty _Arg, int) -> decltype(_GetUnwrappedType(_Arg));
     // fallback
@@ -4753,7 +4772,7 @@ auto create_task(_Ty _Param, task_options _TaskOptions = task_options()) -> task
             "incorrect argument for create_task; can be a callable object or a task_completion_event"
 #endif  /* defined (__cplusplus_winrt) */
     );
-    details::_get_internal_task_options(_TaskOptions)._set_creation_callstack(_CAPTURE_CALLSTACK());
+    details::_get_internal_task_options(_TaskOptions)._set_creation_callstack(PPLX_CAPTURE_CALLSTACK());
     task<typename details::_TaskTypeFromParam<_Ty>::_Type> _CreatedTask(_Param, _TaskOptions);
     return _CreatedTask;
 }
@@ -5651,8 +5670,8 @@ namespace details
     {
     internal:
 
-        _AsyncInfoBase() : 
-            _M_currentStatus(_AsyncStatusInternal::_AsyncCreated), 
+        _AsyncInfoBase() :
+            _M_currentStatus(_AsyncStatusInternal::_AsyncCreated),
             _M_errorCode(S_OK),
             _M_completeDelegate(nullptr),
             _M_CompleteDelegateAssigned(0),
@@ -5702,7 +5721,7 @@ namespace details
                 _AsyncStatusInternal _Current = _M_currentStatus;
 
                 //
-                // Map our internal cancel pending to cancelled. This way "pending cancelled" looks to the outside as "cancelled" but
+                // Map our internal cancel pending to canceled. This way "pending canceled" looks to the outside as "canceled" but
                 // can still transition to "completed" if the operation completes without acknowledging the cancellation request
                 //
                 switch(_Current)
@@ -6225,7 +6244,7 @@ namespace details
 ///     The return type of the lambda determines whether the construct is an action or an operation.
 ///     <para>Lambdas that return void cause the creation of actions. Lambdas that return a result of type <c>TResult</c> cause the creation of
 ///     operations of TResult.</para>
-///     <para>The lambda may also return a <c>task&lt;TResult&gt;</c> which encapsulates the aysnchronous work within itself or is the continuation of
+///     <para>The lambda may also return a <c>task&lt;TResult&gt;</c> which encapsulates the asynchronous work within itself or is the continuation of
 ///     a chain of tasks that represent the asynchronous work. In this case, the lambda itself is executed inline, since the tasks are the ones that
 ///     execute asynchronously, and the return type of the lambda is unwrapped to produce the asynchronous construct returned by <c>create_async</c>.
 ///     This implies that a lambda that returns a task&lt;void&gt; will cause the creation of actions, and a lambda that returns a task&lt;TResult&gt; will
@@ -6236,10 +6255,10 @@ namespace details
 ///     construct which reports progress of type TProgress each time the <c>report</c> method of the progress_reporter object is called. A lambda that
 ///     takes a cancellation_token may use that token to check for cancellation, or pass it to tasks that it creates so that cancellation of the
 ///     asynchronous construct causes cancellation of those tasks.</para>
-///     <para>If the body of the lambda or function object returns a result (and not a task&lt;TResult&gt;), the lamdba will be executed
+///     <para>If the body of the lambda or function object returns a result (and not a task&lt;TResult&gt;), the lambda will be executed
 ///     asynchronously within the process MTA in the context of a task the Runtime implicitly creates for it. The <c>IAsyncInfo::Cancel</c> method will
 ///     cause cancellation of the implicit task.</para>
-///     <para>If the body of the lambda returns a task, the lamba executes inline, and by declaring the lambda to take an argument of type
+///     <para>If the body of the lambda returns a task, the lambda executes inline, and by declaring the lambda to take an argument of type
 ///     <c>cancellation_token</c> you can trigger cancellation of any tasks you create within the lambda by passing that token in when you create them.
 ///     You may also use the <c>register_callback</c> method on the token to cause the Runtime to invoke a callback when you call <c>IAsyncInfo::Cancel</c> on
 ///     the async operation or action produced..</para>
@@ -6255,7 +6274,7 @@ details::_AsyncTaskGeneratorThunk<_Function> ^create_async(const _Function& _Fun
 {
     static_assert(std::is_same<decltype(details::_IsValidCreateAsync(_Func,0,0,0,0)),std::true_type>::value,
         "argument to create_async must be a callable object taking zero, one or two arguments");
-    return ref new details::_AsyncTaskGeneratorThunk<_Function>(_Func, _CAPTURE_CALLSTACK());
+    return ref new details::_AsyncTaskGeneratorThunk<_Function>(_Func, PPLX_CAPTURE_CALLSTACK());
 }
 
 #endif  /* defined (__cplusplus_winrt) */
@@ -6296,7 +6315,7 @@ namespace details
         void _Resize(size_t _Len, bool _SkipVector = false)
         {
             _M_numTasks = _Len;
-            
+
             if (!_SkipVector)
             {
                 _M_vector.resize(_Len);
@@ -6433,7 +6452,7 @@ namespace details
                         };
 
                         _WhenAllContinuationWrapper(_PParam, _Func, _ResultTask);
-                    }, _CancellationTokenState::_None()); 
+                    }, _CancellationTokenState::_None());
 
                     _Index++;
                 }
@@ -6598,7 +6617,7 @@ namespace details
             auto _mergeVal = _PParam->_M_mergeVal.Get();
 
             if (_OutputVectorFirst == true)
-            {                
+            {
                 _Result.push_back(_mergeVal);
             }
             else
@@ -6655,18 +6674,18 @@ namespace details
 ///     The position of the first element beyond the range of elements to be combined into the resulting task.
 /// </param>
 /// <returns>
-///     A task that completes sucessfully when all of the input tasks have completed successfully. If the input tasks are of type <c>T</c>,
+///     A task that completes successfully when all of the input tasks have completed successfully. If the input tasks are of type <c>T</c>,
 ///     the output of this function will be a <c>task&lt;std::vector&lt;T&gt;&gt;</c>. If the input tasks are of type <c>void</c> the output
 ///     task will also be a <c>task&lt;void&gt;</c>.
 /// </returns>
 /// <remarks>
 ///     If one of the tasks is canceled or throws an exception, the returned task will complete early, in the canceled state, and the exception,
-///     if one is encoutered, will be thrown if you call <c>get()</c> or <c>wait()</c> on that task.
+///     if one is encountered, will be thrown if you call <c>get()</c> or <c>wait()</c> on that task.
 /// </remarks>
 /// <seealso cref="Task Parallelism (Concurrency Runtime)"/>
 /**/
 template <typename _Iterator>
-auto when_all(_Iterator _Begin, _Iterator _End, const task_options& _TaskOptions = task_options()) 
+auto when_all(_Iterator _Begin, _Iterator _End, const task_options& _TaskOptions = task_options())
     -> decltype (details::_WhenAllImpl<typename std::iterator_traits<_Iterator>::value_type::result_type, _Iterator>::_Perform(_TaskOptions, _Begin, _End))
 {
     typedef typename std::iterator_traits<_Iterator>::value_type::result_type _ElementType;
@@ -6674,7 +6693,7 @@ auto when_all(_Iterator _Begin, _Iterator _End, const task_options& _TaskOptions
 }
 
 /// <summary>
-///     Creates a task that will complete succesfully when both of the tasks supplied as arguments complete successfully.
+///     Creates a task that will complete successfully when both of the tasks supplied as arguments complete successfully.
 /// </summary>
 /// <typeparam name="_ReturnType">
 ///     The type of the returned task.
@@ -6694,7 +6713,7 @@ auto when_all(_Iterator _Begin, _Iterator _End, const task_options& _TaskOptions
 /// </returns>
 /// <remarks>
 ///     If one of the tasks is canceled or throws an exception, the returned task will complete early, in the canceled state, and the exception,
-///     if one is encoutered, will be thrown if you call <c>get()</c> or <c>wait()</c> on that task.
+///     if one is encountered, will be thrown if you call <c>get()</c> or <c>wait()</c> on that task.
 /// </remarks>
 /// <seealso cref="Task Parallelism (Concurrency Runtime)"/>
 /**/
@@ -6706,7 +6725,7 @@ auto operator&&(const task<_ReturnType> & _Lhs, const task<_ReturnType> & _Rhs) 
 }
 
 /// <summary>
-///     Creates a task that will complete succesfully when both of the tasks supplied as arguments complete successfully.
+///     Creates a task that will complete successfully when both of the tasks supplied as arguments complete successfully.
 /// </summary>
 /// <typeparam name="_ReturnType">
 ///     The type of the returned task.
@@ -6726,7 +6745,7 @@ auto operator&&(const task<_ReturnType> & _Lhs, const task<_ReturnType> & _Rhs) 
 /// </returns>
 /// <remarks>
 ///     If one of the tasks is canceled or throws an exception, the returned task will complete early, in the canceled state, and the exception,
-///     if one is encoutered, will be thrown if you call <c>get()</c> or <c>wait()</c> on that task.
+///     if one is encountered, will be thrown if you call <c>get()</c> or <c>wait()</c> on that task.
 /// </remarks>
 /// <seealso cref="Task Parallelism (Concurrency Runtime)"/>
 /**/
@@ -6737,7 +6756,7 @@ auto operator&&(const task<std::vector<_ReturnType>> & _Lhs, const task<_ReturnT
 }
 
 /// <summary>
-///     Creates a task that will complete succesfully when both of the tasks supplied as arguments complete successfully.
+///     Creates a task that will complete successfully when both of the tasks supplied as arguments complete successfully.
 /// </summary>
 /// <typeparam name="_ReturnType">
 ///     The type of the returned task.
@@ -6757,7 +6776,7 @@ auto operator&&(const task<std::vector<_ReturnType>> & _Lhs, const task<_ReturnT
 /// </returns>
 /// <remarks>
 ///     If one of the tasks is canceled or throws an exception, the returned task will complete early, in the canceled state, and the exception,
-///     if one is encoutered, will be thrown if you call <c>get()</c> or <c>wait()</c> on that task.
+///     if one is encountered, will be thrown if you call <c>get()</c> or <c>wait()</c> on that task.
 /// </remarks>
 /// <seealso cref="Task Parallelism (Concurrency Runtime)"/>
 /**/
@@ -6768,7 +6787,7 @@ auto operator&&(const task<_ReturnType> & _Lhs, const task<std::vector<_ReturnTy
 }
 
 /// <summary>
-///     Creates a task that will complete succesfully when both of the tasks supplied as arguments complete successfully.
+///     Creates a task that will complete successfully when both of the tasks supplied as arguments complete successfully.
 /// </summary>
 /// <typeparam name="_ReturnType">
 ///     The type of the returned task.
@@ -6788,7 +6807,7 @@ auto operator&&(const task<_ReturnType> & _Lhs, const task<std::vector<_ReturnTy
 /// </returns>
 /// <remarks>
 ///     If one of the tasks is canceled or throws an exception, the returned task will complete early, in the canceled state, and the exception,
-///     if one is encoutered, will be thrown if you call <c>get()</c> or <c>wait()</c> on that task.
+///     if one is encountered, will be thrown if you call <c>get()</c> or <c>wait()</c> on that task.
 /// </remarks>
 /// <seealso cref="Task Parallelism (Concurrency Runtime)"/>
 /**/
@@ -6850,7 +6869,7 @@ namespace details
                     }
                 }
             }
-            
+
             if (atomic_increment(_PParam->_M_completeCount) == _PParam->_M_numTasks)
             {
                 // If no one has be completed so far, we need to make some final cancellation decision.
@@ -6889,16 +6908,16 @@ namespace details
             }
             _CancellationTokenState *_PTokenState = _TaskOptions.has_cancellation_token() ? _TaskOptions.get_cancellation_token()._GetImplValue() : nullptr;
             auto _PParam = new _RunAnyParam<std::pair<std::pair<_ElementType, size_t>, _CancellationTokenState *>>();
-            
+
             if (_PTokenState)
             {
                 _JoinAllTokens_Add(_PParam->_M_cancellationSource, _PTokenState);
                 _PParam->_M_fHasExplicitToken = true;
             }
-            
+
             task_options _Options(_TaskOptions);
             _Options.set_cancellation_token(_PParam->_M_cancellationSource.get_token());
-            task<std::pair<std::pair<_ElementType, size_t>, _CancellationTokenState *>> _Any_tasks_completed(_PParam->_M_Completed, _Options); 
+            task<std::pair<std::pair<_ElementType, size_t>, _CancellationTokenState *>> _Any_tasks_completed(_PParam->_M_Completed, _Options);
 
             // Keep a copy ref to the token source
             auto _CancellationSource = _PParam->_M_cancellationSource;
@@ -6949,7 +6968,7 @@ namespace details
 
             _CancellationTokenState *_PTokenState = _TaskOptions.has_cancellation_token() ? _TaskOptions.get_cancellation_token()._GetImplValue() : nullptr;
             auto _PParam = new _RunAnyParam<std::pair<size_t, _CancellationTokenState *>>();
-            
+
             if (_PTokenState)
             {
                 _JoinAllTokens_Add(_PParam->_M_cancellationSource, _PTokenState);
@@ -7070,7 +7089,7 @@ auto when_any(_Iterator _Begin, _Iterator _End, cancellation_token _Cancellation
 ///     The second task to combine into the resulting task.
 /// </param>
 /// <returns>
-///     A task that completes sucessfully when either of the input tasks has completed successfully. If the input tasks are of type <c>T</c>,
+///     A task that completes successfully when either of the input tasks has completed successfully. If the input tasks are of type <c>T</c>,
 ///     the output of this function will be a <c>task&lt;std::vector&lt;T&gt;</c>. If the input tasks are of type <c>void</c> the output task
 ///     will also be a <c>task&lt;void&gt;</c>.
 ///     <para> To allow for a construct of the sort taskA || taskB &amp;&amp; taskC, which are combined in pairs, with &amp;&amp; taking precedence
@@ -7131,7 +7150,7 @@ task<_ReturnType> operator||(const task<_ReturnType> & _Lhs, const task<_ReturnT
 ///     The second task to combine into the resulting task.
 /// </param>
 /// <returns>
-///     A task that completes sucessfully when either of the input tasks has completed successfully. If the input tasks are of type <c>T</c>,
+///     A task that completes successfully when either of the input tasks has completed successfully. If the input tasks are of type <c>T</c>,
 ///     the output of this function will be a <c>task&lt;std::vector&lt;T&gt;</c>. If the input tasks are of type <c>void</c> the output task
 ///     will also be a <c>task&lt;void&gt;</c>.
 ///     <para> To allow for a construct of the sort taskA || taskB &amp;&amp; taskC, which are combined in pairs, with &amp;&amp; taking precedence
@@ -7175,8 +7194,8 @@ task<std::vector<_ReturnType>> operator||(const task<std::vector<_ReturnType>> &
         _WhenAnyContinuationWrapper(_PParam, _Func, _ResultTask);
     }, details::_CancellationTokenState::_None());
 
-    
-    _Rhs._Then([_PParam](task<_ReturnType> _ResultTask) 
+
+    _Rhs._Then([_PParam](task<_ReturnType> _ResultTask)
     {
         auto _PParamCopy = _PParam;
         auto _Func = [&_ResultTask, _PParamCopy]() {
@@ -7205,7 +7224,7 @@ task<std::vector<_ReturnType>> operator||(const task<std::vector<_ReturnType>> &
 ///     The second task to combine into the resulting task.
 /// </param>
 /// <returns>
-///     A task that completes sucessfully when either of the input tasks has completed successfully. If the input tasks are of type <c>T</c>,
+///     A task that completes successfully when either of the input tasks has completed successfully. If the input tasks are of type <c>T</c>,
 ///     the output of this function will be a <c>task&lt;std::vector&lt;T&gt;</c>. If the input tasks are of type <c>void</c> the output task
 ///     will also be a <c>task&lt;void&gt;</c>.
 ///     <para> To allow for a construct of the sort taskA || taskB &amp;&amp; taskC, which are combined in pairs, with &amp;&amp; taking precedence
@@ -7237,7 +7256,7 @@ auto operator||(const task<_ReturnType> & _Lhs, const task<std::vector<_ReturnTy
 ///     The second task to combine into the resulting task.
 /// </param>
 /// <returns>
-///     A task that completes sucessfully when either of the input tasks has completed successfully. If the input tasks are of type <c>T</c>,
+///     A task that completes successfully when either of the input tasks has completed successfully. If the input tasks are of type <c>T</c>,
 ///     the output of this function will be a <c>task&lt;std::vector&lt;T&gt;</c>. If the input tasks are of type <c>void</c> the output task
 ///     will also be a <c>task&lt;void&gt;</c>.
 ///     <para> To allow for a construct of the sort taskA || taskB &amp;&amp; taskC, which are combined in pairs, with &amp;&amp; taking precedence
@@ -7331,6 +7350,4 @@ namespace concurrency = Concurrency;
 #endif
 #endif
 
-#endif // _PPLXTASKS_H
-
-
+#endif // PPLXTASKS_H
