@@ -2,13 +2,13 @@
  * Copyright (C) Microsoft. All rights reserved.
  * Licensed under the MIT license. See LICENSE.txt file in the project root for full license information.
  *
- * =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+ * =+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
  *
  * HTTP Library: Compression and decompression interfaces
  *
  * For the latest on this and related APIs, please see: https://github.com/Microsoft/cpprestsdk
  *
- * =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+ * =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
  ****/
 
 #include "stdafx.h"
@@ -89,7 +89,14 @@ public:
             throw std::runtime_error("Prior unrecoverable compression stream error " + std::to_string(m_state));
         }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wtautological-constant-compare"
+#endif // __clang__
         if (input_size > std::numeric_limits<uInt>::max() || output_size > std::numeric_limits<uInt>::max())
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif // __clang__
         {
             throw std::runtime_error("Compression input or output size out of range");
         }
@@ -143,8 +150,8 @@ public:
     ~zlib_compressor_base() { (void)deflateEnd(&m_stream); }
 
 private:
-    int m_state{Z_BUF_ERROR};
-    z_stream m_stream{};
+    int m_state {Z_BUF_ERROR};
+    z_stream m_stream {};
     const utility::string_t& m_algorithm;
 };
 
@@ -183,7 +190,14 @@ public:
             throw std::runtime_error("Prior unrecoverable decompression stream error " + std::to_string(m_state));
         }
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wtautological-constant-compare"
+#endif // __clang__
         if (input_size > std::numeric_limits<uInt>::max() || output_size > std::numeric_limits<uInt>::max())
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif // __clang__
         {
             throw std::runtime_error("Compression input or output size out of range");
         }
@@ -238,8 +252,8 @@ public:
     ~zlib_decompressor_base() { (void)inflateEnd(&m_stream); }
 
 private:
-    int m_state{Z_BUF_ERROR};
-    z_stream m_stream{};
+    int m_state {Z_BUF_ERROR};
+    z_stream m_stream {};
     const utility::string_t& m_algorithm;
 };
 
@@ -297,13 +311,13 @@ public:
                       uint32_t block = 0,
                       uint32_t nomodel = 0,
                       uint32_t hint = 0)
-        : m_algorithm(BROTLI)
-        , m_window(window)
+        : m_window(window)
         , m_quality(quality)
         , m_mode(mode)
         , m_block(block)
         , m_nomodel(nomodel)
         , m_hint(hint)
+        , m_algorithm(BROTLI)
     {
         (void)reset();
     }
@@ -458,9 +472,9 @@ public:
     }
 
 private:
-    BROTLI_BOOL m_state{BROTLI_FALSE};
-    BrotliEncoderState* m_stream{nullptr};
-    bool m_done{false};
+    BROTLI_BOOL m_state {BROTLI_FALSE};
+    BrotliEncoderState* m_stream {nullptr};
+    bool m_done {false};
     uint32_t m_window;
     uint32_t m_quality;
     uint32_t m_mode;
@@ -518,6 +532,7 @@ public:
         // have to first allocate a guaranteed-large-enough buffer and then copy out of it, or we'd have to call
         // reset() if it failed due to insufficient output buffer space (and we'd need to use
         // BrotliDecoderGetErrorCode() to tell if that's why it failed)
+        (void)hint;
         m_state = BrotliDecoderDecompressStream(m_stream, &avail_in, &next_in, &avail_out, &next_out, &total_out);
         if (m_state == BROTLI_DECODER_RESULT_ERROR)
         {
@@ -574,8 +589,8 @@ public:
     }
 
 private:
-    BrotliDecoderResult m_state{BROTLI_DECODER_RESULT_ERROR};
-    BrotliDecoderState* m_stream{nullptr};
+    BrotliDecoderResult m_state {BROTLI_DECODER_RESULT_ERROR};
+    BrotliDecoderState* m_stream {nullptr};
     const utility::string_t& m_algorithm;
 };
 #endif // CPPREST_BROTLI_COMPRESSION
