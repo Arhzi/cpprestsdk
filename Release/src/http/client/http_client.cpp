@@ -41,8 +41,8 @@ static void verify_uri(const uri& uri)
 
 namespace details
 {
-#if defined(_WIN32)
-extern const utility::char_t* get_with_body_err_msg =
+#if defined(_WIN32) || defined(CPPREST_FORCE_HTTP_CLIENT_WINHTTPPAL)
+const utility::char_t* get_with_body_err_msg =
     _XPLATSTR("A GET or HEAD request should not have an entity body.");
 #endif
 
@@ -386,7 +386,7 @@ http_client::http_client(const uri& base_uri, const http_client_config& client_c
 
     m_pipeline = std::make_shared<http_pipeline>(std::move(final_pipeline_stage));
 
-#if !defined(CPPREST_TARGET_XP)
+#if _WIN32_WINNT >= _WIN32_WINNT_VISTA
     add_handler(std::static_pointer_cast<http::http_pipeline_stage>(
         std::make_shared<oauth1::details::oauth1_handler>(client_config.oauth1())));
 #endif

@@ -1,3 +1,114 @@
+cpprestsdk (2.10.16)
+* PR#1383 CMake fixes + CMake search for OpenSSL (macOS)
+* PR#1392 Update submodule websocketpp to 0.8.2
+* PR#1393 Do not report errors (such as EBADF and EINVAL) from setsockopt here, since this is a performance optimization only, and hard errors will be picked up by the following operation
+* PR#1379 Fix compilation with GCC 4.8/4.9, which was broken by commit 53fab3a.
+* PR#1328 Add support for HTTP redirection in ASIO and WinHTTP-based http_clients
+* PR#1332 Fix more http test build fails in certain configurations
+* PR#1370 Remove redundant std::move noted by gcc 9.2 (-Wredundant-move)
+* PR#1372 Static analyzer (PVS Studio) fixes
+* PR#1350 Expose json::value::parse for UTF8 string on Windows
+* PR#1344 libcpprestsdk: fix building as a static library
+-- cpprestsdk team <askcasablanca@microsoft.com>  FRI, 24 Apr 2020 16:56:00 -0700
+
+cpprestsdk (2.10.15)
+* Extremely special thanks to @garethsb-sony for a large number of contributions in this release
+* PR#1209 Workarounds for two GCC 4.7.2 bugs with lambda functions
+* PR#1220 Fix SxS debug-release builds with Visual Studio
+* PR#1219 Fix "Data" to "Date" in the HTTP Server API mapping, and clarify that the indices of these values match the HTTP_HEADER_ID values for HTTP_REQUEST_HEADERS but *not* HTTP_RESPONSE_HEADERS
+* PR#1196 Fixing of connections_and_errors::cancel_with_error test which sometimes fires false positive error "There are no pending calls to next_request."
+* PR#1233 Trim whitespace and nulls the same way.
+* PR#1248 Avoid using permissive- with ZW which breaks VS2019
+* PR#1182 Support for WinHTTPAL curl-to-WinHTTP adapter
+* PR#1253 http_server_httpsys.cpp requires linking against httpapi.lib, http_client_winhttp.cpp does not.
+* PR#1263 Remove trailing slash on websocketpp submodule url, which causes checkout failure on CircleCI with git 2.22.0
+* PR#1293 Update vcpkg and remove tests that look for web servers that no longer exist
+* PR#1288 Fix test case broken by commit f4c863b
+* PR#1276 Added comparison overrides to utility::datetime
+* PR#1289 Fix various warnings reported by gcc 9.3, and possibly earlier versions
+* PR#1334 Update vcpkg and boost on Android
+* PR#1306 Change default installation directory for cmake files to cmake/cpprestsdk
+* PR#1330 Use LC_ALL_MASK rather than LC_ALL when calling newlocale
+* PR#1310 Add TCP_NODELAY to disable Nagle's algorithm in Boost.ASIO-based http_client
+* PR#1335 Turn VS2015 back on now that vcpkg is fixed.
+* PR#1322 Enable HTTP compression support on all platforms
+* PR#1340 Add Ubuntu 18.04 testing.
+* PR#1342 Use C++11 synchronization classes under macOS too
+* PR#1339 Fix tcp::resolver data race in the asio backend and be defensive against empty results
+-- cpprestsdk team <askcasablanca@microsoft.com>  THR, 22 Feb 2020 08:31:00 -0800
+
+cpprestsdk (2.10.14)
+* Potential breaking change warning: This release changes the "default" proxy for the WinHTTP backend to go back to WINHTTP_ACCESS_TYPE_DEFAULT_PROXY. See https://github.com/microsoft/cpprestsdk/commit/60e067e71aebebdda5d82955060f5f0821c9df1d for more details. To get automatic WPAD behavior, set the proxy to auto detect.
+* macOS with Brew and iOS builds have been disabled and are no longer being tested because our dependency boost for ios project appears to be broken with current releases of XCode as on the Azure Pipelines machines. We are interested in macOS / iOS folks who know what's going on here in contributing a repair to turn this back on.
+* PR#1133 Add switches to make apiscan happy.
+* PR#1130 json: {"meow"} is not a valid object
+* PR#1150 Undefine compress if it is defined by zconf.h
+* PR#1156 Fix broken CI Builds
+* PR#1155 Use EVP_MAX_MD_SIZE instead of HMAC_MAX_MD_CBLOCK
+* PR#1145 Remove the address_configured flag on tcp::resolver::query
+* PR#1143 add ping and pong to message handler
+* PR#539 Fix reusing ASIO http_client connecting to HTTPS server via proxy
+* PR#1175 Fix issue #1171: Order of object destruction
+* PR#1183 FIX: SSL proxy tunnel support with basic auth
+* PR#1184 Fix profile being set on the compiler instead of the linker.
+* PR#1185 Update boost-for-android for Android NDK r20 and disable macOS Homebrew.
+* PR#1187 Replace CPPREST_TARGET_XP with version checks, remove ""s, and other cleanup
+* PR#1188 Remove proxy settings detection behavior in "default proxy mode."
+-- cpprestsdk team <askcasablanca@microsoft.com>  TUE, 16 Jul 2019 09:06:00 +0200
+
+cpprestsdk (2.10.13)
+* PR#1120 Fix off by one error in leap years before year 2000, and bad day names
+* PR#1117 Parse and emit years from 1900 to 9999, and remove environment variable dependence on Android
+* PR#1106 Paranoia for overflow of sprintf buffer in the year 10000
+* PR#1101 Update request_timeout_microsecond timeout
+* PR#1097 Allow error handling for time out in http_client_asio handle_connect
+* PR#1094 Avoid tripping over 32 bit time_t mistakes.
+* PR#1093 Don't initialize atomic_flag with 0.
+-- cpprestsdk team <askcasablanca@microsoft.com>  WED, 24 Apr 2019 10:57:00 -0800
+
+cpprestsdk (2.10.12)
+* PR#1088 Fix data race, GitHub #1085
+* PR#1084 Fix oauth nonces containing nulls.
+* PR#1082 Workaround data-race on websocketpp's _htonll function
+* PR#1080 Fix thread not joined
+* PR#1076 Rewrite date formatting and parsing
+-- cpprestsdk team <askcasablanca@microsoft.com>  TUE, 26 Mar 2019 11:57:00 -0800
+
+cpprestsdk (2.10.11)
+* PR##1073 Move get_jvm_env back into the crossplat namespace
+* PR##1049 Add the missing ssl::context callback in websocket_client_config
+* PR##1072 Gate stdext::checked_array_iterator usage on _ITERATOR_DEBUG_LEVEL
+* PR##1051 Fix http_client_asio "https" with a proxy
+* PR##1071 Add --vcpkg-root to repair UWP.
+* PR##1041 Update Boost_for_android for Android R19
+* PR##1064 Enable testing from root directory
+* PR##1057 Returns int64 value in function of seeking to file end on x64 Windows.
+* PR##1068 Don't close the output stream when reporting errors reading the body.
+* PR##1053 Update vcpkg.
+* PR##1032 Fix HTTP/1.0 'Keep-Alive' handling in http_client
+* PR##1040 Disable WINHTTP_AUTOPROXY_OPTIONS machinery when using WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY.
+-- cpprestsdk team <askcasablanca@microsoft.com>  WED, 20 Mar 2019 02:30:00 -0800
+
+cpprestsdk (2.10.10)
+----------------------
+* PR#1023 Handle multi-byte unicode characters in json parsing
+* PR#1033 Temporary fix for VS2013. Note that VS2013 is still not in support.
+-- cpprestsdk team <askcasablanca@microsoft.com>  TUE, 29 Jan 2019 22:38:00 -0800
+
+cpprestsdk (2.10.9)
+----------------------
+* PR#973  Address gcc warnings-as-errors in compression code, test improvements
+* PR#986  Prevent infinite loop during proxy authentication
+* PR#987  Remove use of aligned_union that broke CentOS 7.
+* PR#1004 #993, #1002: Add flexibility for iOS building. Adds command line args…
+* PR#1009 gcc: Fix compilation with -fno-operator-names
+* PR#1019 FIX: crash with std::logic_error when reusing a connection that timed out on the server
+* PR#1021 handle null bytes when parsing utf8
+* PR#1017 Add in support for adding i386 slice when building for 32-bit targets. Also improve messaging and add means to clean
+* PR#1024 http_compression.cpp: fix build with gcc 4.7
+* PR#1022 Resolve double free when WinHttpSendRequest fails
+-- cpprestsdk team <askcasablanca@microsoft.com>  FRI, 18 Jan 2019 16:58:00 -0800
+
 cpprestsdk (2.10.8)
 ----------------------
 * PR#938 Allow ppltasks.h and pplxtasks.h to co-exist

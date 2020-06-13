@@ -22,13 +22,15 @@ set -e
 
 DO_BOOST=1
 DO_OPENSSL=1
+DO_CMAKE=1
 DO_CPPRESTSDK=1
 
-BOOSTVER=1.65.1
-OPENSSLVER=1.0.2k
+BOOSTVER=1.70.0
+OPENSSLVER=1.1.0j
+CMAKEVER=3.14.0
 
 API=15
-STL=c++_static
+STL=c++_shared
 
 function usage {
     echo "Usage: $0 [--skip-boost] [--skip-openssl] [--skip-cpprestsdk] [-h] [--ndk <android-ndk>]"
@@ -51,6 +53,9 @@ do
     "--skip-openssl")
         DO_OPENSSL=0
         ;;
+    "--skip-cmake")
+        DO_CMAKE=0
+        ;;
     "--skip-cpprestsdk")
         DO_CPPRESTSDK=0
         ;;
@@ -58,6 +63,11 @@ do
         shift
         DO_BOOST=1
         BOOSTVER=$1
+        ;;
+    "--cmake")
+        shift
+        DO_CMAKE=1
+        CMAKEVER=$1
         ;;
     "--openssl")
         shift
@@ -82,6 +92,8 @@ done
 
 # Variables setup
 
+unset BOOST_ROOT
+
 if [ ! -e "${ANDROID_NDK}/ndk-build" ]
 then
     echo "ANDROID_NDK does not point to a valid NDK."
@@ -92,10 +104,10 @@ NDK_DIR=`cd "${ANDROID_NDK}" && pwd`
 SRC_DIR=`pwd`
 
 if [ -z "$NCPU" ]; then
-	NCPU=4
-	if uname -s | grep -i "linux" > /dev/null ; then
-		NCPU=`cat /proc/cpuinfo | grep -c -i processor`
-	fi
+    NCPU=4
+    if uname -s | grep -i "linux" > /dev/null ; then
+        NCPU=`cat /proc/cpuinfo | grep -c -i processor`
+    fi
 fi
 
 # -----------------------
@@ -130,8 +142,8 @@ if [ "${DO_OPENSSL}" == "1" ]; then (
     if [ ! -d "openssl" ]; then mkdir openssl; fi
     cd openssl
     cp -af "${DIR}/openssl/." .
-    make all ANDROID_NDK="${NDK_DIR}" ANDROID_TOOLCHAIN=clang ANDROID_GCC_VERSION=4.9 ANDROID_ABI=armeabi-v7a OPENSSL_PREFIX=armeabi-v7a OPENSSL_VERSION=$OPENSSLVER
-    make all ANDROID_NDK="${NDK_DIR}" ANDROID_TOOLCHAIN=clang ANDROID_GCC_VERSION=4.9 ANDROID_ABI=x86 OPENSSL_PREFIX=x86 OPENSSL_VERSION=$OPENSSLVER
+    make all ANDROID_NDK="${NDK_DIR}" ANDROID_TOOLCHAIN=clang ANDROID_ABI=armeabi-v7a OPENSSL_PREFIX=armeabi-v7a OPENSSL_VERSION=$OPENSSLVER -j $NCPU
+    make all ANDROID_NDK="${NDK_DIR}" ANDROID_TOOLCHAIN=clang ANDROID_ABI=x86 OPENSSL_PREFIX=x86 OPENSSL_VERSION=$OPENSSLVER -j $NCPU
 ) fi
 
 # -----
@@ -139,11 +151,12 @@ if [ "${DO_OPENSSL}" == "1" ]; then (
 # -----
 # Uses the build script from Moritz Wundke (formerly MysticTreeGames)
 # https://github.com/moritz-wundke/Boost-for-Android
+# (plus the patch https://github.com/o01eg/Boost-for-Android/tree/ndk-bump-21)
 
 if [ "${DO_BOOST}" == "1" ]; then (
-    if [ ! -d 'Boost-for-Android' ]; then git clone https://github.com/moritz-wundke/Boost-for-Android; fi
+    if [ ! -d 'Boost-for-Android' ]; then git clone https://github.com/o01eg/Boost-for-Android/; fi
     cd Boost-for-Android
-    git checkout 84973078a3d7668067d422d4654696ef59ab9d6d
+    git checkout 7626dd6f7cab7866dce20e685d4a1b11194366a7
     PATH="$PATH:$NDK_DIR" \
     CXXFLAGS="-std=gnu++11" \
     ./build-android.sh \
@@ -153,6 +166,20 @@ if [ "${DO_BOOST}" == "1" ]; then (
         "${NDK_DIR}" || exit 1
 ) fi
 
+# ------
+# CMake
+# ------
+# We update CMake because the version included with Ubuntu is too old to handle Boost 1.69.
+
+if [ "${DO_CMAKE}" == "1" ]; then (
+    if [ ! -d "cmake-${CMAKEVER}" ]; then wget https://github.com/Kitware/CMake/releases/download/v${CMAKEVER}/cmake-${CMAKEVER}-Linux-x86_64.sh; fi
+    chmod +x cmake-${CMAKEVER}-Linux-x86_64.sh
+    rm -rf cmake-${CMAKEVER}
+    mkdir cmake-${CMAKEVER}
+    cd cmake-${CMAKEVER}
+    ../cmake-${CMAKEVER}-Linux-x86_64.sh --skip-license
+) fi
+
 # ----------
 # casablanca
 # ----------
@@ -160,16 +187,18 @@ if [ "${DO_BOOST}" == "1" ]; then (
 if [ "${DO_CPPRESTSDK}" == "1" ]; then
     # Use the builtin CMake toolchain configuration that comes with the NDK
     function build_cpprestsdk { (
-        mkdir -p $1
-        cd $1
-        cmake "${DIR}/.." \
+    rm -rf $1
+        ./cmake-${CMAKEVER}/bin/cmake \
             -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK}/build/cmake/android.toolchain.cmake" \
             -DANDROID_NDK="${ANDROID_NDK}" \
             -DANDROID_TOOLCHAIN=clang \
             -DANDROID_ABI=$2 \
             -DBOOST_VERSION="${BOOSTVER}" \
-            -DCMAKE_BUILD_TYPE=$3
-        make -j $NCPU
+            -DCPPREST_EXCLUDE_WEBSOCKETS=ON \
+            -DCMAKE_BUILD_TYPE=$3 \
+            -S "${DIR}/.." \
+            -B $1
+        make -j $NCPU -C $1
     ) }
 
     # Build the cpprestsdk for each target configuration

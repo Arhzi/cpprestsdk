@@ -32,7 +32,7 @@ using namespace http::details;
 using namespace http::experimental::listener;
 using namespace http::experimental::details;
 
-#define CHUNK_SIZE 64 * 1024
+#define CHUNK_SIZE (64 * 1024)
 
 namespace web
 {
@@ -43,62 +43,53 @@ namespace experimental
 namespace details
 {
 /// <summary>
-/// String values for all HTTP Server API known headers.
+/// String values for all HTTP Server API HTTP_REQUEST_HEADERS known headers.
 /// NOTE: the order here is important it is from the _HTTP_HEADER_ID enum.
 /// </summary>
-static utility::string_t HttpServerAPIKnownHeaders[] = {U("Cache-Control"),
-                                                        U("Connection"),
-                                                        U("Data"),
-                                                        U("Keep-Alive"),
-                                                        U("Pragma"),
-                                                        U("Trailer"),
-                                                        U("Transfer-Encoding"),
-                                                        U("Upgrade"),
-                                                        U("Via"),
-                                                        U("Warning"),
-                                                        U("Allow"),
-                                                        U("Content-Length"),
-                                                        U("Content-Type"),
-                                                        U("Content-Encoding"),
-                                                        U("Content-Language"),
-                                                        U("Content-Location"),
-                                                        U("Content-Md5"),
-                                                        U("Content-Range"),
-                                                        U("Expires"),
-                                                        U("Last-Modified"),
-                                                        U("Accept"),
-                                                        U("Accept-Charset"),
-                                                        U("Accept-Encoding"),
-                                                        U("Accept-Language"),
-                                                        U("Authorization"),
-                                                        U("Cookie"),
-                                                        U("Expect"),
-                                                        U("From"),
-                                                        U("Host"),
-                                                        U("If-Match"),
-                                                        U("If-Modified-Since"),
-                                                        U("If-None-Match"),
-                                                        U("If-Range"),
-                                                        U("If-Unmodified-Since"),
-                                                        U("Max-Forwards"),
-                                                        U("Proxy-Authorization"),
-                                                        U("Referer"),
-                                                        U("Range"),
-                                                        U("TE"),
-                                                        U("Translate"),
-                                                        U("User-Agent"),
-                                                        U("Request-Maximum"),
-                                                        U("Accept-Ranges"),
-                                                        U("Age"),
-                                                        U("Etag"),
-                                                        U("Location"),
-                                                        U("Proxy-Authenticate"),
-                                                        U("Retry-After"),
-                                                        U("Server"),
-                                                        U("Set-Cookie"),
-                                                        U("Vary"),
-                                                        U("Www-Authenticate"),
-                                                        U("Response-Maximum")};
+static utility::string_t HttpServerAPIRequestKnownHeaders[] =
+{
+    U("Cache-Control"),
+    U("Connection"),
+    U("Date"),
+    U("Keep-Alive"),
+    U("Pragma"),
+    U("Trailer"),
+    U("Transfer-Encoding"),
+    U("Upgrade"),
+    U("Via"),
+    U("Warning"),
+    U("Allow"),
+    U("Content-Length"),
+    U("Content-Type"),
+    U("Content-Encoding"),
+    U("Content-Language"),
+    U("Content-Location"),
+    U("Content-MD5"),
+    U("Content-Range"),
+    U("Expires"),
+    U("Last-Modified"),
+    U("Accept"),
+    U("Accept-Charset"),
+    U("Accept-Encoding"),
+    U("Accept-Language"),
+    U("Authorization"),
+    U("Cookie"),
+    U("Expect"),
+    U("From"),
+    U("Host"),
+    U("If-Match"),
+    U("If-Modified-Since"),
+    U("If-None-Match"),
+    U("If-Range"),
+    U("If-Unmodified-Since"),
+    U("Max-Forwards"),
+    U("Proxy-Authorization"),
+    U("Referer"),
+    U("Range"),
+    U("TE"),
+    U("Translate"),
+    U("User-Agent")
+};
 
 static void char_to_wstring(utf16string& dest, const char* src)
 {
@@ -155,14 +146,14 @@ void parse_http_headers(const HTTP_REQUEST_HEADERS& headers, http::http_headers&
         }
         else
         {
-            msgHeaders[unknown_header_name] = U("");
+            msgHeaders[unknown_header_name].clear();
         }
     }
     for (int i = 0; i < HttpHeaderMaximum; ++i)
     {
         if (headers.KnownHeaders[i].RawValueLength > 0)
         {
-            msgHeaders.add(HttpServerAPIKnownHeaders[i],
+            msgHeaders.add(HttpServerAPIRequestKnownHeaders[i],
                            utility::conversions::to_utf16string(headers.KnownHeaders[i].pRawValue));
         }
     }
@@ -225,8 +216,8 @@ pplx::task<void> http_windows_server::register_listener(
             return pplx::task_from_exception<void>(
                 http_exception(errorCode,
                                _XPLATSTR("Access denied: attempting to add Address '") + pListener->uri().to_string() +
-                                   _XPLATSTR("'. ") _XPLATSTR("Run as administrator to listen on an hostname other "
-                                                              "than localhost, or to listen on port 80.")));
+                                   _XPLATSTR("'. Run as administrator to listen on an hostname other ")
+                                       _XPLATSTR("than localhost, or to listen on port 80.")));
         }
         else
         {
@@ -976,10 +967,10 @@ void windows_request_context::async_process_response()
 
     // OK, so we need to chunk it up.
     _ASSERTE(content_length > 0);
-    m_sending_in_chunks = (content_length != std::numeric_limits<size_t>::max());
-    m_transfer_encoding = (content_length == std::numeric_limits<size_t>::max());
+    m_sending_in_chunks = (content_length != (std::numeric_limits<size_t>::max)());
+    m_transfer_encoding = (content_length == (std::numeric_limits<size_t>::max)());
     m_remaining_to_write = content_length;
-    if (content_length == std::numeric_limits<size_t>::max())
+    if (content_length == (std::numeric_limits<size_t>::max)())
     {
         // Attempt to figure out the remaining length of the input stream
         m_remaining_to_write = m_response._get_impl()->_get_stream_length();

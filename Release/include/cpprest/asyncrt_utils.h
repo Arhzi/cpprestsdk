@@ -374,6 +374,26 @@ inline bool __cdecl is_alnum(Elem ch) CPPREST_NOEXCEPT
 }
 
 /// <summary>
+/// Our own implementation of whitespace test instead of std::isspace to avoid
+/// taking global lock for performance reasons.
+/// The following characters are considered whitespace:
+/// 0x09 == Horizontal Tab
+/// 0x0A == Line Feed
+/// 0x0B == Vertical Tab
+/// 0x0C == Form Feed
+/// 0x0D == Carrage Return
+/// 0x20 == Space
+/// </summary>
+template<class Elem>
+inline bool __cdecl is_space(Elem ch) CPPREST_NOEXCEPT
+{
+    // assumes 'x' == L'x' for the ASCII range
+    typedef typename std::make_unsigned<Elem>::type UElem;
+    const auto uch = static_cast<UElem>(ch);
+    return uch == 0x20u || (uch >= 0x09u && uch <= 0x0Du);
+}
+
+/// <summary>
 /// Simplistic implementation of make_unique. A better implementation would be based on variadic templates
 /// and therefore not be compatible with Dev10.
 /// </summary>
@@ -608,6 +628,14 @@ public:
     bool operator==(datetime dt) const { return m_interval == dt.m_interval; }
 
     bool operator!=(const datetime& dt) const { return !(*this == dt); }
+   
+    bool operator>(const datetime& dt) const { return this->m_interval > dt.m_interval; }
+   
+    bool operator<(const datetime& dt) const { return this->m_interval < dt.m_interval; }
+      
+    bool operator>=(const datetime& dt) const { return this->m_interval >= dt.m_interval; }
+   
+    bool operator<=(const datetime& dt) const { return this->m_interval <= dt.m_interval; }
 
     static interval_type from_milliseconds(unsigned int milliseconds) { return milliseconds * _msTicks; }
 
@@ -629,15 +657,6 @@ private:
     static const interval_type _minuteTicks = 60 * _secondTicks;
     static const interval_type _hourTicks = 60 * 60 * _secondTicks;
     static const interval_type _dayTicks = 24 * 60 * 60 * _secondTicks;
-
-#ifdef _WIN32
-    // void* to avoid pulling in windows.h
-    static _ASYNCRTIMP bool __cdecl system_type_to_datetime(/*SYSTEMTIME*/ void* psysTime,
-                                                            uint64_t seconds,
-                                                            datetime* pdt);
-#else
-    static datetime timeval_to_datetime(const timeval& time);
-#endif
 
     // Private constructor. Use static methods to create an instance.
     datetime(interval_type interval) : m_interval(interval) {}
@@ -699,7 +718,6 @@ public:
     void set_length(int length) { m_length = length; }
 
 private:
-    static const utility::string_t c_allowed_chars;
     std::mt19937 m_random;
     int m_length;
 };

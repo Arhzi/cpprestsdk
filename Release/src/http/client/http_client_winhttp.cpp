@@ -15,12 +15,18 @@
 #include "stdafx.h"
 
 #include "../common/x509_cert_utilities.h"
+#include "../common/internal_http_helpers.h"
 #include "cpprest/http_headers.h"
 #include "http_client_impl.h"
+#ifdef WIN32
 #include <Wincrypt.h>
+#endif
+#if defined(CPPREST_FORCE_HTTP_CLIENT_WINHTTPPAL)
+#include "winhttppal.h"
+#endif
 #include <atomic>
 
-#ifndef CPPREST_TARGET_XP
+#if _WIN32_WINNT && (_WIN32_WINNT >= _WIN32_WINNT_VISTA)
 #include <VersionHelpers.h>
 #endif
 
@@ -96,19 +102,7 @@ static http::status_code parse_status_code(HINTERNET request_handle)
                         &buffer[0],
                         &length,
                         WINHTTP_NO_HEADER_INDEX);
-    return (unsigned short)_wtoi(buffer.c_str());
-}
-
-// Helper function to trim leading and trailing null characters from a string.
-static void trim_nulls(utility::string_t& str)
-{
-    size_t index;
-    for (index = 0; index < str.size() && str[index] == 0; ++index)
-        ;
-    str.erase(0, index);
-    for (index = str.size(); index > 0 && str[index - 1] == 0; --index)
-        ;
-    str.erase(index);
+    return (unsigned short)stoi(buffer);
 }
 
 // Helper function to get the reason phrase from a WinHTTP response.
@@ -126,14 +120,14 @@ static utility::string_t parse_reason_phrase(HINTERNET request_handle)
                         &length,
                         WINHTTP_NO_HEADER_INDEX);
     // WinHTTP reports back the wrong length, trim any null characters.
-    trim_nulls(phrase);
+    ::web::http::details::trim_nulls(phrase);
     return phrase;
 }
 
 /// <summary>
 /// Parses a string containing HTTP headers.
 /// </summary>
-static void parse_winhttp_headers(HINTERNET request_handle, _In_z_ utf16char* headersStr, http_response& response)
+static void parse_winhttp_headers(HINTERNET request_handle, _In_z_ utility::char_t* headersStr, http_response& response)
 {
     // Clear the header map for each new response; otherwise, the header values will be combined.
     response.headers().clear();
@@ -152,7 +146,7 @@ static std::string build_error_msg(unsigned long code, const std::string& locati
     msg.append(": ");
     msg.append(std::to_string(code));
     msg.append(": ");
-    msg.append(utility::details::windows_category().message(code));
+    msg.append(utility::details::platform_category().message(static_cast<int>(code)));
     return msg;
 }
 
@@ -169,6 +163,7 @@ static std::string build_error_msg(_In_ WINHTTP_ASYNC_RESULT* error_result)
         default: return build_error_msg(error_result->dwError, "Unknown WinHTTP Function");
     }
 }
+
 
 class memory_holder
 {
@@ -210,6 +205,24 @@ enum msg_body_type
     transfer_encoding_chunked
 };
 
+static DWORD WinHttpDefaultProxyConstant() CPPREST_NOEXCEPT
+{
+#if _WIN32_WINNT >= _WIN32_WINNT_VISTA
+#if _WIN32_WINNT < _WIN32_WINNT_WINBLUE
+    if (!IsWindows8Point1OrGreater())
+    {
+        // Not Windows 8.1 or later, use the default proxy setting
+        return WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
+    }
+#endif // _WIN32_WINNT < _WIN32_WINNT_WINBLUE
+
+    // Windows 8.1 or later, use the automatic proxy setting
+    return WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY;
+#else  // ^^^ _WIN32_WINNT >= _WIN32_WINNT_VISTA ^^^ // vvv _WIN32_WINNT < _WIN32_WINNT_VISTA vvv
+    return WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
+#endif // _WIN32_WINNT >= _WIN32_WINNT_VISTA
+}
+
 // Additional information necessary to track a WinHTTP request.
 class winhttp_request_context final : public request_context
 {
@@ -244,10 +257,13 @@ public:
     bool is_externally_allocated() const { return !m_body_data.is_internally_allocated(); }
 
     HINTERNET m_request_handle;
-    std::weak_ptr<winhttp_request_context>* m_request_context;
+    std::weak_ptr<winhttp_request_context>*
+        m_request_handle_context; // owned by m_request_handle to be deleted by WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING
 
     bool m_proxy_authentication_tried;
     bool m_server_authentication_tried;
+
+    size_t m_remaining_redirects;
 
     msg_body_type m_bodyType;
 
@@ -281,7 +297,7 @@ public:
         {
         }
 
-#if defined(_MSC_VER) && _MSC_VER < 1900
+#if (defined(_MSC_VER) && _MSC_VER < 1900) || defined(CPPREST_FORCE_HTTP_CLIENT_WINHTTPPAL)
         compression_state(const compression_state&) = delete;
         compression_state(compression_state&& other)
             : m_buffer(std::move(other.m_buffer))
@@ -463,7 +479,7 @@ public:
                         if (m_bytes_remaining)
                         {
                             // We're at the offset of a chunk of consumable data; let the caller process it
-                            l = std::min(m_bytes_remaining, buffer_size - n);
+                            l = (std::min)(m_bytes_remaining, buffer_size - n);
                             m_bytes_remaining -= l;
                             if (!m_bytes_remaining)
                             {
@@ -532,9 +548,7 @@ public:
 
         if (m_request_handle != nullptr)
         {
-            auto tmp_handle = m_request_handle;
-            m_request_handle = nullptr;
-            WinHttpCloseHandle(tmp_handle);
+            WinHttpCloseHandle(m_request_handle);
         }
     }
 
@@ -546,6 +560,10 @@ public:
 
     void on_send_request_validate_cn()
     {
+#if defined(CPPREST_FORCE_HTTP_CLIENT_WINHTTPPAL)
+        // we do the validation inside curl
+        return;
+#else
         if (m_customCnCheck.empty())
         {
             // no custom validation selected; either we've delegated that to winhttp or
@@ -641,6 +659,7 @@ public:
         }
 
         m_cachedEncodedCert.assign(encodedFirst, encodedLast);
+#endif
     }
 
 protected:
@@ -660,14 +679,14 @@ private:
     winhttp_request_context(const std::shared_ptr<_http_client_communicator>& client, const http_request& request)
         : request_context(client, request)
         , m_request_handle(nullptr)
-        , m_request_context(nullptr)
-        , m_bodyType(no_body)
-        , m_startingPosition(std::char_traits<uint8_t>::eof())
-        , m_body_data()
-        , m_remaining_to_write(0)
         , m_proxy_authentication_tried(false)
         , m_server_authentication_tried(false)
+        , m_remaining_redirects(0)
+        , m_bodyType(no_body)
+        , m_remaining_to_write(0)
+        , m_startingPosition(std::char_traits<uint8_t>::eof())
         , m_readStream(request.body())
+        , m_body_data()
     {
     }
 };
@@ -726,10 +745,10 @@ class winhttp_client final : public _http_client_communicator
 public:
     winhttp_client(http::uri address, http_client_config client_config)
         : _http_client_communicator(std::move(address), std::move(client_config))
-        , m_secure(m_uri.scheme() == _XPLATSTR("https"))
         , m_opened(false)
         , m_hSession(nullptr)
         , m_hConnection(nullptr)
+        , m_secure(m_uri.scheme() == _XPLATSTR("https"))
     {
     }
 
@@ -747,7 +766,7 @@ public:
         if (m_hSession != nullptr)
         {
             // Unregister the callback.
-            WinHttpSetStatusCallback(m_hSession, nullptr, WINHTTP_CALLBACK_FLAG_ALL_NOTIFICATIONS, NULL);
+            WinHttpSetStatusCallback(m_hSession, nullptr, WINHTTP_CALLBACK_FLAG_ALL_NOTIFICATIONS, 0);
 
             WinHttpCloseHandle(m_hSession);
         }
@@ -787,33 +806,30 @@ protected:
         ie_proxy_config proxyIE;
 
         DWORD access_type;
-        LPCWSTR proxy_name;
-        LPCWSTR proxy_bypass = WINHTTP_NO_PROXY_BYPASS;
+        LPCTSTR proxy_name = WINHTTP_NO_PROXY_NAME;
+        LPCTSTR proxy_bypass = WINHTTP_NO_PROXY_BYPASS;
+        m_proxy_auto_config = false;
         utility::string_t proxy_str;
         http::uri uri;
 
         const auto& config = client_config();
-
-        if (config.proxy().is_disabled())
+        const auto& proxy = config.proxy();
+        if (proxy.is_default())
+        {
+            access_type = WinHttpDefaultProxyConstant();
+        }
+        else if (proxy.is_disabled())
         {
             access_type = WINHTTP_ACCESS_TYPE_NO_PROXY;
-            proxy_name = WINHTTP_NO_PROXY_NAME;
         }
-        else if (config.proxy().is_default() || config.proxy().is_auto_discovery())
+        else if (proxy.is_auto_discovery())
         {
-            // Use the default WinHTTP proxy by default.
-            access_type = WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
-            proxy_name = WINHTTP_NO_PROXY_NAME;
+            access_type = WinHttpDefaultProxyConstant();
+            if (access_type != WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY)
+            {
+                // Windows 8 or earlier, do proxy autodetection ourselves
+                m_proxy_auto_config = true;
 
-#ifndef CPPREST_TARGET_XP
-            if (IsWindows8Point1OrGreater())
-            {
-                // Windows 8.1 and newer supports automatic proxy discovery and auto-fallback to IE proxy settings
-                access_type = WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY;
-            }
-            else
-            {
-                // However, if it is not configured...
                 proxy_info proxyDefault;
                 if (!WinHttpGetDefaultProxyConfiguration(&proxyDefault) ||
                     proxyDefault.dwAccessType == WINHTTP_ACCESS_TYPE_NO_PROXY)
@@ -845,12 +861,6 @@ protected:
                         }
                     }
                 }
-            }
-#endif
-
-            if (config.proxy().is_auto_discovery())
-            {
-                m_proxy_auto_config = true;
             }
         }
         else
@@ -885,12 +895,14 @@ protected:
             return GetLastError();
         }
 
-        // Set timeouts.
-        int milliseconds = static_cast<int>(config.timeout<std::chrono::milliseconds>().count());
-        milliseconds = std::max<decltype(milliseconds)>(milliseconds, 1);
-        if (!WinHttpSetTimeouts(m_hSession, milliseconds, milliseconds, milliseconds, milliseconds))
         {
-            return GetLastError();
+            // Set timeouts.
+            const int milliseconds =
+                (std::max)(static_cast<int>(config.timeout<std::chrono::milliseconds>().count()), 1);
+            if (!WinHttpSetTimeouts(m_hSession, milliseconds, milliseconds, milliseconds, milliseconds))
+            {
+                return GetLastError();
+            }
         }
 
         if (config.guarantee_order())
@@ -904,19 +916,18 @@ protected:
             }
         }
 
-        // Enable TLS 1.1 and 1.2
-#if !defined(CPPREST_TARGET_XP)
-        BOOL win32_result(FALSE);
-
-        DWORD secure_protocols(WINHTTP_FLAG_SECURE_PROTOCOL_SSL3 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1 |
-                               WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_1 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2);
-        win32_result = ::WinHttpSetOption(
-            m_hSession, WINHTTP_OPTION_SECURE_PROTOCOLS, &secure_protocols, sizeof(secure_protocols));
-        if (FALSE == win32_result)
         {
-            return GetLastError();
-        }
+            // Enable TLS 1.1 and 1.2
+#if (_WIN32_WINNT >= _WIN32_WINNT_VISTA) || defined(CPPREST_FORCE_HTTP_CLIENT_WINHTTPPAL)
+            DWORD secure_protocols(WINHTTP_FLAG_SECURE_PROTOCOL_SSL3 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1 |
+                                   WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_1 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2);
+            if (!WinHttpSetOption(
+                m_hSession, WINHTTP_OPTION_SECURE_PROTOCOLS, &secure_protocols, sizeof(secure_protocols)))
+            {
+                return GetLastError();
+            }
 #endif
+        }
 
         config._invoke_nativesessionhandle_options(m_hSession);
 
@@ -925,7 +936,8 @@ protected:
             WinHttpSetStatusCallback(m_hSession,
                                      &winhttp_client::completion_callback,
                                      WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS | WINHTTP_CALLBACK_FLAG_HANDLES |
-                                         WINHTTP_CALLBACK_FLAG_SECURE_FAILURE | WINHTTP_CALLBACK_FLAG_SEND_REQUEST,
+                                         WINHTTP_CALLBACK_FLAG_SECURE_FAILURE | WINHTTP_CALLBACK_FLAG_SEND_REQUEST |
+                                         WINHTTP_CALLBACK_STATUS_REDIRECT,
                                      0))
         {
             return GetLastError();
@@ -969,11 +981,20 @@ protected:
         proxy_info info;
         bool proxy_info_required = false;
 
+        const auto& method = msg.method();
+
+        // stop injection of headers via method
+        // resource should be ok, since it's been encoded
+        // and host won't resolve
+        if (!::web::http::details::validate_method(method))
+        {
+            request->report_exception(http_exception("The method string is invalid."));
+            return;
+        }
+
         if (m_proxy_auto_config)
         {
-            WINHTTP_AUTOPROXY_OPTIONS autoproxy_options;
-            memset(&autoproxy_options, 0, sizeof(WINHTTP_AUTOPROXY_OPTIONS));
-
+            WINHTTP_AUTOPROXY_OPTIONS autoproxy_options {};
             if (m_proxy_auto_config_url.empty())
             {
                 autoproxy_options.dwFlags = WINHTTP_AUTOPROXY_AUTO_DETECT;
@@ -1004,6 +1025,8 @@ protected:
             http::uri_builder(m_uri).append(msg.relative_uri()).to_uri().resource().to_string();
 
         // Open the request.
+        winhttp_context->m_request_handle_context = new std::weak_ptr<winhttp_request_context>(winhttp_context);
+
         winhttp_context->m_request_handle =
             WinHttpOpenRequest(m_hConnection,
                                msg.method().c_str(),
@@ -1015,7 +1038,21 @@ protected:
         if (winhttp_context->m_request_handle == nullptr)
         {
             auto errorCode = GetLastError();
+            delete winhttp_context->m_request_handle_context;
+            winhttp_context->m_request_handle_context = 0;
             request->report_error(errorCode, build_error_msg(errorCode, "WinHttpOpenRequest"));
+            return;
+        }
+
+        if (!WinHttpSetOption(winhttp_context->m_request_handle,
+                              WINHTTP_OPTION_CONTEXT_VALUE,
+                              &winhttp_context->m_request_handle_context,
+                              sizeof(void*)))
+        {
+            auto errorCode = GetLastError();
+            delete winhttp_context->m_request_handle_context;
+            winhttp_context->m_request_handle_context = 0;
+            request->report_error(errorCode, build_error_msg(errorCode, "WinHttpSetOption request context"));
             return;
         }
 
@@ -1055,11 +1092,11 @@ protected:
         if (client_config().validate_certificates())
         {
             // if we are validating certificates, also turn on revocation checking
-            DWORD dwEnableSSLRevocOpt = WINHTTP_ENABLE_SSL_REVOCATION;
+            DWORD dwEnableSSLRevocationOpt = WINHTTP_ENABLE_SSL_REVOCATION;
             if (!WinHttpSetOption(winhttp_context->m_request_handle,
                                   WINHTTP_OPTION_ENABLE_FEATURE,
-                                  &dwEnableSSLRevocOpt,
-                                  sizeof(dwEnableSSLRevocOpt)))
+                                  &dwEnableSSLRevocationOpt,
+                                  sizeof(dwEnableSSLRevocationOpt)))
             {
                 auto errorCode = GetLastError();
                 request->report_error(errorCode, build_error_msg(errorCode, "Error enabling SSL revocation check"));
@@ -1096,6 +1133,63 @@ protected:
             return;
         }
 
+// WinHttpPAL does not currently provide these options
+// See https://github.com/microsoft/WinHttpPAL/issues/1
+#if !defined(CPPREST_FORCE_HTTP_CLIENT_WINHTTPPAL)
+        if (client_config().max_redirects() == 0)
+        {
+            // Disable auto redirects.
+            DWORD redirectPolicy = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+            if (!WinHttpSetOption(winhttp_context->m_request_handle,
+                                  WINHTTP_OPTION_REDIRECT_POLICY,
+                                  &redirectPolicy,
+                                  sizeof(redirectPolicy)))
+            {
+                auto errorCode = GetLastError();
+                request->report_error(errorCode, build_error_msg(errorCode, "Setting redirect policy"));
+                return;
+            }
+            // Note, using WINHTTP_OPTION_DISABLE_FEATURE with WINHTTP_DISABLE_REDIRECTS here doesn't seem to work.
+        }
+        else
+        {
+            // Set max auto redirects.
+
+            // Add 1 to config value because WinHttp option counts the original request.
+            // And another 1 to enable the response (headers) of the rejected automatic redirect to be returned
+            // rather than reporting an error "WinHttpReceiveResponse: 12156: The HTTP redirect request failed".
+            DWORD maxRedirects = client_config().max_redirects() < MAXDWORD - 2
+                ? static_cast<DWORD>(client_config().max_redirects() + 2)
+                : MAXDWORD;
+            // Therefore, effective max redirects
+            winhttp_context->m_remaining_redirects = maxRedirects - 2;
+
+            if (!WinHttpSetOption(winhttp_context->m_request_handle,
+                                  WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS,
+                                  &maxRedirects,
+                                  sizeof(maxRedirects)))
+            {
+                auto errorCode = GetLastError();
+                request->report_error(errorCode, build_error_msg(errorCode, "Setting max automatic redirects"));
+                return;
+            }
+
+            // (Dis)allow HTTPS to HTTP redirects.
+            DWORD redirectPolicy = client_config().https_to_http_redirects()
+                ? WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS
+                : WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP;
+            if (!WinHttpSetOption(winhttp_context->m_request_handle,
+                                  WINHTTP_OPTION_REDIRECT_POLICY,
+                                  &redirectPolicy,
+                                  sizeof(redirectPolicy)))
+            {
+                auto errorCode = GetLastError();
+                request->report_error(errorCode, build_error_msg(errorCode, "Setting redirect policy"));
+                return;
+            }
+        }
+#endif
+
         size_t content_length;
         try
         {
@@ -1115,7 +1209,7 @@ protected:
             }
 
             // There is a request body that needs to be transferred.
-            if (content_length == std::numeric_limits<size_t>::max())
+            if (content_length == (std::numeric_limits<size_t>::max)())
             {
                 // The content length is not set and the application set a stream. This is an
                 // indication that we will use transfer encoding chunked.  We still want to
@@ -1194,69 +1288,36 @@ protected:
 private:
     void _start_request_send(const std::shared_ptr<winhttp_request_context>& winhttp_context, size_t content_length)
     {
-        // WinHttp takes a context object as a void*. We therefore heap allocate a std::weak_ptr to the request context
-        // which will be destroyed during the final callback.
-        std::unique_ptr<std::weak_ptr<winhttp_request_context>> weak_context_holder;
-        if (winhttp_context->m_request_context == nullptr)
-        {
-            weak_context_holder = std::make_unique<std::weak_ptr<winhttp_request_context>>(winhttp_context);
-            winhttp_context->m_request_context = weak_context_holder.get();
-        }
-
+        DWORD totalLength;
         if (winhttp_context->m_bodyType == no_body)
         {
-            if (!WinHttpSendRequest(winhttp_context->m_request_handle,
-                                    WINHTTP_NO_ADDITIONAL_HEADERS,
-                                    0,
-                                    nullptr,
-                                    0,
-                                    0,
-                                    (DWORD_PTR)winhttp_context->m_request_context))
-            {
-                if (weak_context_holder) winhttp_context->m_request_context = nullptr;
-
-                auto errorCode = GetLastError();
-                winhttp_context->report_error(errorCode, build_error_msg(errorCode, "WinHttpSendRequest"));
-            }
-            else
-            {
-                // Ownership of the weak_context_holder was accepted by the callback, so release the pointer without
-                // freeing.
-                weak_context_holder.release();
-            }
-
-            return;
-        }
-
-        // Capture the current read position of the stream.
-        auto rbuf = winhttp_context->_get_readbuffer();
-
-        // Record starting position in case request is challenged for authorization
-        // and needs to seek back to where reading is started from.
-        winhttp_context->m_startingPosition = rbuf.getpos(std::ios_base::in);
-
-        // If we find ourselves here, we either don't know how large the message
-        // body is, or it is larger than our threshold.
-        if (!WinHttpSendRequest(winhttp_context->m_request_handle,
-                                WINHTTP_NO_ADDITIONAL_HEADERS,
-                                0,
-                                nullptr,
-                                0,
-                                winhttp_context->m_bodyType == content_length_chunked
-                                    ? (DWORD)content_length
-                                    : WINHTTP_IGNORE_REQUEST_TOTAL_LENGTH,
-                                (DWORD_PTR)winhttp_context->m_request_context))
-        {
-            if (weak_context_holder) winhttp_context->m_request_context = nullptr;
-
-            auto errorCode = GetLastError();
-            winhttp_context->report_error(errorCode, build_error_msg(errorCode, "WinHttpSendRequest chunked"));
+            totalLength = 0;
         }
         else
         {
-            // Ownership of the weak_context_holder was accepted by the callback, so release the pointer without
-            // freeing.
-            weak_context_holder.release();
+            // Capture the current read position of the stream.
+            auto rbuf = winhttp_context->_get_readbuffer();
+
+            // Record starting position in case request is challenged for authorization
+            // and needs to seek back to where reading is started from.
+            winhttp_context->m_startingPosition = rbuf.getpos(std::ios_base::in);
+
+            // If we find ourselves here, we either don't know how large the message
+            totalLength = winhttp_context->m_bodyType == content_length_chunked ? (DWORD)content_length
+                                                                                : WINHTTP_IGNORE_REQUEST_TOTAL_LENGTH;
+        }
+
+        const auto requestSuccess = WinHttpSendRequest(winhttp_context->m_request_handle,
+                                                       WINHTTP_NO_ADDITIONAL_HEADERS,
+                                                       0,
+                                                       nullptr,
+                                                       0,
+                                                       totalLength,
+                                                       (DWORD_PTR)winhttp_context->m_request_handle_context);
+        if (!requestSuccess)
+        {
+            auto errorCode = GetLastError();
+            winhttp_context->report_error(errorCode, build_error_msg(errorCode, "WinHttpSendRequest"));
         }
     }
 
@@ -1329,11 +1390,11 @@ private:
                 chunk_size =
                     p_request_context->m_body_data.size() - http::details::chunked_encoding::additional_encoding_space;
             }
-            else if (p_request_context->m_remaining_to_write != std::numeric_limits<size_t>::max())
+            else if (p_request_context->m_remaining_to_write != (std::numeric_limits<size_t>::max)())
             {
                 // Choose a semi-intelligent size based on how much total data is left to compress
-                chunk_size = std::min(static_cast<size_t>(p_request_context->m_remaining_to_write) + 128,
-                                      p_request_context->m_http_client->client_config().chunksize());
+                chunk_size = (std::min)(static_cast<size_t>(p_request_context->m_remaining_to_write) + 128,
+                                        p_request_context->m_http_client->client_config().chunksize());
             }
             else
             {
@@ -1345,8 +1406,8 @@ private:
         {
             // We're not compressing; use the smaller of the remaining data (if known) and the configured (or default)
             // chunk size
-            chunk_size = std::min(static_cast<size_t>(p_request_context->m_remaining_to_write),
-                                  p_request_context->m_http_client->client_config().chunksize());
+            chunk_size = (std::min)(static_cast<size_t>(p_request_context->m_remaining_to_write),
+                                    p_request_context->m_http_client->client_config().chunksize());
         }
         p_request_context->allocate_request_space(
             nullptr, chunk_size + http::details::chunked_encoding::additional_encoding_space);
@@ -1384,7 +1445,7 @@ private:
                 chunk_size + http::details::chunked_encoding::additional_encoding_space,
                 bytes_read);
 
-            if (!compressor && p_request_context->m_remaining_to_write != std::numeric_limits<size_t>::max())
+            if (!compressor && p_request_context->m_remaining_to_write != (std::numeric_limits<size_t>::max)())
             {
                 if (bytes_read == 0 && p_request_context->m_remaining_to_write)
                 {
@@ -1439,7 +1500,6 @@ private:
                 {
                     return pplx::task_from_exception<size_t>(std::current_exception());
                 }
-                _ASSERTE(bytes_read >= 0);
 
                 uint8_t* buffer = p_request_context->m_compression_state.m_acquired;
                 if (buffer == nullptr)
@@ -1479,7 +1539,7 @@ private:
                          p_request_context->m_compression_state.m_bytes_read)
                 {
                     if (p_request_context->m_remaining_to_write &&
-                        p_request_context->m_remaining_to_write != std::numeric_limits<size_t>::max())
+                        p_request_context->m_remaining_to_write != (std::numeric_limits<size_t>::max)())
                     {
                         // The stream ended earlier than we detected it should
                         return pplx::task_from_exception<size_t>(http_exception(
@@ -1532,7 +1592,7 @@ private:
                         p_request_context->m_compression_state.m_bytes_processed += r.input_bytes_processed;
                         _ASSERTE(p_request_context->m_compression_state.m_bytes_processed <=
                                  p_request_context->m_compression_state.m_bytes_read);
-                        if (p_request_context->m_remaining_to_write != std::numeric_limits<size_t>::max())
+                        if (p_request_context->m_remaining_to_write != (std::numeric_limits<size_t>::max)())
                         {
                             _ASSERTE(p_request_context->m_remaining_to_write >= r.input_bytes_processed);
                             p_request_context->m_remaining_to_write -= r.input_bytes_processed;
@@ -1582,7 +1642,7 @@ private:
                             return;
                         }
                         else if (p_request_context->m_remaining_to_write &&
-                                 p_request_context->m_remaining_to_write != std::numeric_limits<size_t>::max())
+                                 p_request_context->m_remaining_to_write != (std::numeric_limits<size_t>::max)())
                         {
                             // Unexpected end-of-stream.
                             p_request_context->report_error(GetLastError(),
@@ -1600,8 +1660,8 @@ private:
                 }
                 else
                 {
-                    length = std::min(static_cast<size_t>(p_request_context->m_remaining_to_write),
-                                      p_request_context->m_http_client->client_config().chunksize());
+                    length = (std::min)(static_cast<size_t>(p_request_context->m_remaining_to_write),
+                                        p_request_context->m_http_client->client_config().chunksize());
                     if (p_request_context->m_compression_state.m_buffer.capacity() < length)
                     {
                         p_request_context->m_compression_state.m_buffer.reserve(length);
@@ -1712,16 +1772,16 @@ private:
         }
     }
 
-    static std::wstring get_request_url(HINTERNET hRequestHandle)
+    static utility::string_t get_request_url(HINTERNET hRequestHandle)
     {
-        std::wstring url;
+        utility::string_t url;
         auto urlSize = static_cast<unsigned long>(url.capacity()) * 2; // use initial small string optimization capacity
         for (;;)
         {
-            url.resize(urlSize / sizeof(wchar_t));
-            if (WinHttpQueryOption(hRequestHandle, WINHTTP_OPTION_URL, &url[0], &urlSize))
+            url.resize(urlSize / sizeof(utility::char_t));
+            if (WinHttpQueryOption(hRequestHandle, WINHTTP_OPTION_URL, &url[0], (LPDWORD)&urlSize))
             {
-                url.resize(wcslen(url.c_str()));
+                url.resize(url.length());
                 return url;
             }
 
@@ -1856,7 +1916,7 @@ private:
         if (content_length > 0)
         {
             // There is a request body that needs to be transferred.
-            if (content_length == std::numeric_limits<size_t>::max())
+            if (content_length == (std::numeric_limits<size_t>::max)())
             {
                 // The content length is unknown and the application set a stream. This is an
                 // indication that we will need to chunk the data.
@@ -1887,7 +1947,7 @@ private:
     static void CALLBACK completion_callback(
         HINTERNET hRequestHandle, DWORD_PTR context, DWORD statusCode, _In_ void* statusInfo, DWORD statusInfoLength)
     {
-        CASABLANCA_UNREFERENCED_PARAMETER(statusInfoLength);
+        (void)statusInfoLength;
 
         std::weak_ptr<winhttp_request_context>* p_weak_request_context =
             reinterpret_cast<std::weak_ptr<winhttp_request_context>*>(context);
@@ -1976,11 +2036,17 @@ private:
                 }
                 return;
             }
-            case WINHTTP_CALLBACK_STATUS_SENDING_REQUEST: p_request_context->on_send_request_validate_cn(); return;
+            case WINHTTP_CALLBACK_STATUS_SENDING_REQUEST:
+            {
+                p_request_context->on_send_request_validate_cn();
+                return;
+            }
             case WINHTTP_CALLBACK_STATUS_SECURE_FAILURE:
+            {
                 p_request_context->report_exception(web::http::http_exception(
                     generate_security_failure_message(*reinterpret_cast<std::uint32_t*>(statusInfo))));
                 return;
+            }
             case WINHTTP_CALLBACK_STATUS_WRITE_COMPLETE:
             {
                 DWORD bytesWritten = *((DWORD*)statusInfo);
@@ -2028,8 +2094,15 @@ private:
                 }
                 return;
             }
-            case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
+            case WINHTTP_CALLBACK_STATUS_REDIRECT:
             {
+                // Return and continue unless that's too many automatic redirects.
+                if (p_request_context->m_remaining_redirects > 0)
+                {
+                    --p_request_context->m_remaining_redirects;
+                    return;
+                }
+
                 // First need to query to see what the headers size is.
                 DWORD headerBufferLength = 0;
                 query_header_length(hRequestHandle, WINHTTP_QUERY_RAW_HEADERS_CRLF, headerBufferLength);
@@ -2037,7 +2110,7 @@ private:
                 // Now allocate buffer for headers and query for them.
                 std::vector<unsigned char> header_raw_buffer;
                 header_raw_buffer.resize(headerBufferLength);
-                utf16char* header_buffer = reinterpret_cast<utf16char*>(&header_raw_buffer[0]);
+                utility::char_t* header_buffer = reinterpret_cast<utility::char_t*>(&header_raw_buffer[0]);
                 if (!WinHttpQueryHeaders(hRequestHandle,
                                          WINHTTP_QUERY_RAW_HEADERS_CRLF,
                                          WINHTTP_HEADER_NAME_BY_INDEX,
@@ -2047,7 +2120,42 @@ private:
                 {
                     auto errorCode = GetLastError();
                     p_request_context->report_error(errorCode, build_error_msg(errorCode, "WinHttpQueryHeaders"));
-                    ;
+                    return;
+                }
+
+                http_response& response = p_request_context->m_response;
+                parse_winhttp_headers(hRequestHandle, header_buffer, response);
+
+                // Signal that the headers are available.
+                p_request_context->complete_headers();
+
+                // The body of the message is unavailable in WINHTTP_CALLBACK_STATUS_REDIRECT.
+                p_request_context->allocate_request_space(nullptr, 0);
+                p_request_context->complete_request(0);
+
+                // Cancel the WinHTTP operation by closing the handle.
+                p_request_context->cleanup();
+                return;
+            }
+            case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
+            {
+                // First need to query to see what the headers size is.
+                DWORD headerBufferLength = 0;
+                query_header_length(hRequestHandle, WINHTTP_QUERY_RAW_HEADERS_CRLF, headerBufferLength);
+
+                // Now allocate buffer for headers and query for them.
+                std::vector<unsigned char> header_raw_buffer;
+                header_raw_buffer.resize(headerBufferLength);
+                utility::char_t* header_buffer = reinterpret_cast<utility::char_t*>(&header_raw_buffer[0]);
+                if (!WinHttpQueryHeaders(hRequestHandle,
+                                         WINHTTP_QUERY_RAW_HEADERS_CRLF,
+                                         WINHTTP_HEADER_NAME_BY_INDEX,
+                                         header_buffer,
+                                         &headerBufferLength,
+                                         WINHTTP_NO_HEADER_INDEX))
+                {
+                    auto errorCode = GetLastError();
+                    p_request_context->report_error(errorCode, build_error_msg(errorCode, "WinHttpQueryHeaders"));
                     return;
                 }
 
@@ -2075,7 +2183,7 @@ private:
                     !p_request_context->m_http_client->client_config().request_compressed_response())
                 {
                     p_request_context->m_compression_state.m_chunk =
-                        std::make_unique<winhttp_request_context::compression_state::_chunk_helper>();
+                        ::utility::details::make_unique<winhttp_request_context::compression_state::_chunk_helper>();
                     p_request_context->m_compression_state.m_chunked = true;
                 }
 
@@ -2222,8 +2330,8 @@ private:
 
                 if (p_request_context->m_decompressor)
                 {
-                    size_t chunk_size = std::max(static_cast<size_t>(bytesRead),
-                                                 p_request_context->m_http_client->client_config().chunksize());
+                    size_t chunk_size = (std::max)(static_cast<size_t>(bytesRead),
+                                                   p_request_context->m_http_client->client_config().chunksize());
                     p_request_context->m_compression_state.m_bytes_read = static_cast<size_t>(bytesRead);
                     p_request_context->m_compression_state.m_chunk_bytes = 0;
 
@@ -2410,24 +2518,23 @@ private:
                                         return keep_going(p_request_context.get());
                                     });
                             });
-                    })
-                        .then([p_request_context](pplx::task<bool> op) {
-                            try
+                    }).then([p_request_context](pplx::task<bool> op) {
+                        try
+                        {
+                            op.get();
+                        }
+                        catch (...)
+                        {
+                            // We're only here to pick up any exception that may have been thrown, and to clean up
+                            // if needed
+                            if (p_request_context->m_compression_state.m_acquired)
                             {
-                                bool ignored = op.get();
+                                p_request_context->_get_writebuffer().commit(0);
+                                p_request_context->m_compression_state.m_acquired = nullptr;
                             }
-                            catch (...)
-                            {
-                                // We're only here to pick up any exception that may have been thrown, and to clean up
-                                // if needed
-                                if (p_request_context->m_compression_state.m_acquired)
-                                {
-                                    p_request_context->_get_writebuffer().commit(0);
-                                    p_request_context->m_compression_state.m_acquired = nullptr;
-                                }
-                                p_request_context->report_exception(std::current_exception());
-                            }
-                        });
+                            p_request_context->report_exception(std::current_exception());
+                        }
+                    });
                 }
                 else
                 {
@@ -2489,6 +2596,7 @@ std::shared_ptr<_http_client_communicator> create_platform_final_pipeline_stage(
 {
     return std::make_shared<details::winhttp_client>(std::move(base_uri), std::move(client_config));
 }
+
 
 } // namespace details
 } // namespace client

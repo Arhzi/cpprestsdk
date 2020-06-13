@@ -156,7 +156,7 @@ SUITE(connections_and_errors)
             test_http_server::scoped_server scoped(m_uri);
             t = scoped.server()->next_request();
             http_client_config config;
-            config.set_timeout(std::chrono::microseconds(500));
+            config.set_timeout(std::chrono::microseconds(900));
 
             http_client client(m_uri, config);
             auto responseTask = client.request(methods::GET);
@@ -226,12 +226,7 @@ SUITE(connections_and_errors)
             http_response rsp = client.request(msg).get();
 
             // The response body should timeout and we should receive an exception
-#ifndef _WIN32
-            // CodePlex 295
-            VERIFY_THROWS(rsp.content_ready().wait(), http_exception);
-#else
             VERIFY_THROWS_HTTP_ERROR_CODE(rsp.content_ready().wait(), std::errc::timed_out);
-#endif
         }
 
         buf.close(std::ios_base::out).wait();
@@ -261,12 +256,7 @@ SUITE(connections_and_errors)
 
             // The response body should timeout and we should receive an exception
             auto readTask = rsp.body().read_to_end(streams::producer_consumer_buffer<uint8_t>());
-#ifndef _WIN32
-            // CodePlex 295
-            VERIFY_THROWS(readTask.get(), http_exception);
-#else
             VERIFY_THROWS_HTTP_ERROR_CODE(readTask.wait(), std::errc::timed_out);
-#endif
         }
 
         buf.close(std::ios_base::out).wait();
@@ -351,7 +341,9 @@ SUITE(connections_and_errors)
             test_http_server::scoped_server server(m_uri);
             pplx::cancellation_token_source source;
 
+            const auto r = server.server()->next_request();
             responseTask = c.request(methods::GET, U("/"), source.get_token());
+            r.wait();
             source.cancel();
         }
 

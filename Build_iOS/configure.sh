@@ -8,6 +8,7 @@ usage() {
     echo "       -config_only only configures cmake (no make invoked)."
     echo "       -include_32bit includes the 32-bit arm architectures."
     echo "       -no_bitcode disables bitcode"
+    echo "       -clean deletes build directory prior to configuring"
 }
 
 ABS_PATH="`dirname \"$0\"`"                 # relative
@@ -22,6 +23,7 @@ CONFIG_ONLY=0
 INCLUDE_32BIT=""
 DISABLE_BITCODE=""
 DEPLOYMENT_TARGET=""
+CLEAN=0
 
 # Command line argument parsing
 while (( "$#" )); do
@@ -58,6 +60,10 @@ while (( "$#" )); do
             DISABLE_BITCODE="-DDISABLE_BITCODE=ON"
             shift 1
             ;;
+        -clean)
+            CLEAN=1
+            shift 1
+            ;;
         *)
             usage
             echo "Error: unsupported argument $1"
@@ -67,8 +73,8 @@ while (( "$#" )); do
 done
 
 ## Configuration
-DEFAULT_BOOST_VERSION=1.67.0
-DEFAULT_OPENSSL_VERSION=1.0.2o
+DEFAULT_BOOST_VERSION=1.69.0
+DEFAULT_OPENSSL_VERSION=1.1.0k
 BOOST_VERSION=${BOOST_VERSION:-${DEFAULT_BOOST_VERSION}}
 OPENSSL_VERSION=${OPENSSL_VERSION:-${DEFAULT_OPENSSL_VERSION}}
 CPPRESTSDK_BUILD_TYPE=${CPPRESTSDK_BUILD_TYPE:-Release}
@@ -90,7 +96,7 @@ if [ ! -e $ABS_PATH/boost.framework ] && [ ! -d $ABS_PATH/boost ]; then
         git clone https://github.com/faithfracture/Apple-Boost-BuildScript ${ABS_PATH}/Apple-Boost-BuildScript
     fi
     pushd ${ABS_PATH}/Apple-Boost-BuildScript
-    git checkout 1b94ec2e2b5af1ee036d9559b96e70c113846392
+    git checkout 8c42427b4ebc7865eb99b0a0b9607888af2c6abc
     BOOST_LIBS="thread chrono filesystem regex system random" ./boost.sh -ios -tvos --boost-version $BOOST_VERSION
     popd
     mv ${ABS_PATH}/Apple-Boost-BuildScript/build/boost/${BOOST_VERSION}/ios/framework/boost.framework ${ABS_PATH}
@@ -106,7 +112,7 @@ if [ ! -e ${ABS_PATH}/openssl/lib/libcrypto.a ]; then
        git clone --depth=1 https://github.com/x2on/OpenSSL-for-iPhone.git ${ABS_PATH}/OpenSSL-for-iPhone
     fi
     pushd ${ABS_PATH}/OpenSSL-for-iPhone
-    git checkout 10019638e80e8a8a5fc19642a840d8a69fac7349
+    git checkout 6c665e2a15ba7e834875eecaf4eb93c11605dd9a
     ./build-libssl.sh --version=${OPENSSL_VERSION}
     popd
     mkdir -p ${ABS_PATH}/openssl/lib
@@ -134,14 +140,26 @@ if [ ! -e ${ABS_PATH}/ios-cmake/ios.toolchain.cmake ]; then
 fi
 
 ## Build CPPRestSDK
+if [ -d "${ABS_PATH}/build.${CPPRESTSDK_BUILD_TYPE}.ios" ]; then
+    if [ "$CLEAN" -eq 1 ]; then
+        echo "Removing directory ${ABS_PATH}/build.${CPPRESTSDK_BUILD_TYPE}.ios prior to configuring."
+        rm -rf "${ABS_PATH}/build.${CPPRESTSDK_BUILD_TYPE}.ios"
+    else
+        printf "WARNING: Running configure on an already existing configuration.\nAny changes to the existing configuration will not be picked up.\nEither remove the directory and re-run configure or run configure with the -clean flag.\n\n"
+    fi
+fi
 
 mkdir -p ${ABS_PATH}/build.${CPPRESTSDK_BUILD_TYPE}.ios
 pushd ${ABS_PATH}/build.${CPPRESTSDK_BUILD_TYPE}.ios
 cmake -DCMAKE_BUILD_TYPE=${CPPRESTSDK_BUILD_TYPE} .. ${INCLUDE_32BIT} ${DISABLE_BITCODE} ${DEPLOYMENT_TARGET}
 if [ "$CONFIG_ONLY" -eq 0 ]; then
     make
+    printf "\n\n===================================================================================\n"
+    echo ">>>> The final library is available in 'build.${CPPRESTSDK_BUILD_TYPE}.ios/lib/libcpprest.a'"
+    printf "===================================================================================\n\n"
+else
+    printf "\n\n===================================================================================\n"
+    echo ">>>> Configuration complete. Run 'make' in 'build.${CPPRESTSDK_BUILD_TYPE}.ios' to build."
+    printf "===================================================================================\n\n"
 fi
 popd
-printf "\n\n===================================================================================\n"
-echo ">>>> The final library is available in 'build.${CPPRESTSDK_BUILD_TYPE}.ios/lib/libcpprest.a'"
-printf "===================================================================================\n\n"

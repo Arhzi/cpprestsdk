@@ -1,5 +1,5 @@
 set(CMAKE_LEGACY_CYGWIN_WIN32 0)
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.9)
 if(POLICY CMP0042)
   cmake_policy(SET CMP0042 NEW) # use MACOSX_RPATH
 endif()
@@ -11,7 +11,7 @@ endif()
 
 set(CPPREST_VERSION_MAJOR 2)
 set(CPPREST_VERSION_MINOR 10)
-set(CPPREST_VERSION_REVISION 8)
+set(CPPREST_VERSION_REVISION 16)
 
 enable_testing()
 
@@ -19,7 +19,7 @@ set(WERROR ON CACHE BOOL "Treat Warnings as Errors.")
 set(CPPREST_EXCLUDE_WEBSOCKETS OFF CACHE BOOL "Exclude websockets functionality.")
 set(CPPREST_EXCLUDE_COMPRESSION OFF CACHE BOOL "Exclude compression functionality.")
 set(CPPREST_EXCLUDE_BROTLI ON CACHE BOOL "Exclude Brotli compression functionality.")
-set(CPPREST_EXPORT_DIR cpprestsdk CACHE STRING "Directory to install CMake config files.")
+set(CPPREST_EXPORT_DIR cmake/cpprestsdk CACHE STRING "Directory to install CMake config files.")
 set(CPPREST_INSTALL_HEADERS ON CACHE BOOL "Install header files.")
 set(CPPREST_INSTALL ON CACHE BOOL "Add install commands.")
 
@@ -61,6 +61,7 @@ endif()
 
 include(cmake/cpprest_find_boost.cmake)
 include(cmake/cpprest_find_zlib.cmake)
+include(cmake/cpprest_find_winhttppal.cmake)
 include(cmake/cpprest_find_openssl.cmake)
 include(cmake/cpprest_find_websocketpp.cmake)
 include(cmake/cpprest_find_brotli.cmake)
@@ -182,8 +183,15 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
   set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MP")
   set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /MP")
 
+  set(CMAKE_SHARED_LINKER_FLAGS_MINSIZEREL "${CMAKE_SHARED_LINKER_FLAGS_MINSIZEREL} /profile /OPT:REF /OPT:ICF")
+  set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /profile /OPT:REF /OPT:ICF")
+
   if (WINDOWS_STORE OR WINDOWS_PHONE)
     add_compile_options(/ZW)
+  else()
+    if (NOT (MSVC_VERSION LESS 1920))
+      add_compile_options(/permissive-)
+    endif()
   endif()
 else()
   message("-- Unknown compiler, success is doubtful.")
@@ -194,6 +202,28 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/Binaries)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/Binaries)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/Binaries)
+
+function(configure_pch target precompile_header precomile_source) # optional additional compile arguments
+  if(MSVC)
+    get_target_property(_srcs ${target} SOURCES)
+
+    set(pch_output_filepath_arg)
+    if(NOT CMAKE_GENERATOR MATCHES "Visual Studio .*")
+      set_property(SOURCE ${precomile_source} APPEND PROPERTY OBJECT_OUTPUTS "${CMAKE_CURRENT_BINARY_DIR}/${target}.pch")
+      set_property(SOURCE ${_srcs} APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/${target}.pch")
+      set(pch_output_filepath_arg "/Fp${CMAKE_CURRENT_BINARY_DIR}/${target}.pch")
+    else()
+      # Don't specify output file so that VS may choose a config spefic location.
+	  # Otherwise Debug/Release builds will interfere with one another.
+    endif()
+
+    set_source_files_properties(${precomile_source} PROPERTIES COMPILE_FLAGS "/Yc${precompile_header}")
+    target_sources(${target} PRIVATE ${precomile_source})
+	# Note: as ${precomile_source} is also a SOURCE for ${target}, the below options will also be applied.
+	# ${precomile_source} has /Yc option that will cause the shared /Yu to be ignored.
+    target_compile_options(${target} PRIVATE /Yu${precompile_header} ${pch_output_filepath_arg} ${ARGN})
+  endif()
+endfunction()
 
 # These settings can be used by the test targets
 set(Casablanca_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include)

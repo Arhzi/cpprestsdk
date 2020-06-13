@@ -21,11 +21,9 @@ namespace
 {
 #if defined(__ANDROID__)
 // This pointer will be 0-initialized by default (at load time).
-std::atomic<JavaVM*> JVM;
-
 static void abort_if_no_jvm()
 {
-    if (JVM == nullptr)
+    if (crossplat::JVM == nullptr)
     {
         __android_log_print(ANDROID_LOG_ERROR,
                             "CPPRESTSDK",
@@ -34,19 +32,6 @@ static void abort_if_no_jvm()
                             "https://github.com/Microsoft/cpprestsdk/wiki/How-to-build-for-Android");
         std::abort();
     }
-}
-
-JNIEnv* get_jvm_env()
-{
-    abort_if_no_jvm();
-    JNIEnv* env = nullptr;
-    auto result = JVM.load()->AttachCurrentThread(&env, nullptr);
-    if (result != JNI_OK)
-    {
-        throw std::runtime_error("Could not attach to JVM");
-    }
-
-    return env;
 }
 #endif // __ANDROID__
 
@@ -57,6 +42,9 @@ struct threadpool_impl final : crossplat::threadpool
         for (size_t i = 0; i < n; i++)
             add_thread();
     }
+
+    threadpool_impl(const threadpool_impl&) = delete;
+    threadpool_impl& operator=(const threadpool_impl&) = delete;
 
     ~threadpool_impl()
     {
@@ -77,14 +65,14 @@ private:
     }
 
 #if defined(__ANDROID__)
-    static void detach_from_java(void*) { JVM.load()->DetachCurrentThread(); }
+    static void detach_from_java(void*) { crossplat::JVM.load()->DetachCurrentThread(); }
 #endif // __ANDROID__
 
     static void* thread_start(void* arg) CPPREST_NOEXCEPT
     {
 #if defined(__ANDROID__)
         // Calling get_jvm_env() here forces the thread to be attached.
-        get_jvm_env();
+        crossplat::get_jvm_env();
         pthread_cleanup_push(detach_from_java, nullptr);
 #endif // __ANDROID__
         threadpool_impl* _this = reinterpret_cast<threadpool_impl*>(arg);
@@ -102,6 +90,13 @@ private:
 #if defined(_WIN32)
 struct shared_threadpool
 {
+#if defined(_MSC_VER) && _MSC_VER < 1900
+    std::aligned_storage<sizeof(threadpool_impl)>::type shared_storage;
+
+    threadpool_impl& get_shared() { return reinterpret_cast<threadpool_impl&>(shared_storage); }
+
+    shared_threadpool(size_t n) { ::new (static_cast<void*>(&shared_storage)) threadpool_impl(n); }
+#else  // ^^^ VS2013 ^^^ // vvv everything else vvv
     union {
         threadpool_impl shared_storage;
     };
@@ -109,6 +104,7 @@ struct shared_threadpool
     threadpool_impl& get_shared() { return shared_storage; }
 
     shared_threadpool(size_t n) : shared_storage(n) {}
+#endif // defined(_MSC_VER) && _MSC_VER < 1900
 
     ~shared_threadpool()
     {
@@ -132,15 +128,21 @@ namespace
 template<class T>
 struct uninitialized
 {
+#if defined(_MSC_VER) && _MSC_VER < 1900
+    typename std::aligned_storage<sizeof(T)>::type storage;
+
+    ~uninitialized()
+    {
+        if (initialized)
+        {
+            reinterpret_cast<T&>(storage).~T();
+        }
+    }
+#else  // ^^^ VS2013 ^^^ // vvv everything else vvv
     union {
         T storage;
     };
 
-    bool initialized;
-
-    uninitialized() CPPREST_NOEXCEPT : initialized(false) {}
-    uninitialized(const uninitialized&) = delete;
-    uninitialized& operator=(const uninitialized&) = delete;
     ~uninitialized()
     {
         if (initialized)
@@ -148,6 +150,12 @@ struct uninitialized
             storage.~T();
         }
     }
+#endif // defined(_MSC_VER) && _MSC_VER < 1900
+
+    bool initialized;
+    uninitialized() CPPREST_NOEXCEPT : initialized(false) {}
+    uninitialized(const uninitialized&) = delete;
+    uninitialized& operator=(const uninitialized&) = delete;
 
     template<class... Args>
     void construct(Args&&... vals)
@@ -173,7 +181,15 @@ std::pair<bool, platform_shared_threadpool*> initialize_shared_threadpool(size_t
         initialized_this_time = true;
     });
 
-    return {initialized_this_time, &uninit_threadpool.storage};
+    return
+    {
+        initialized_this_time,
+#if defined(_MSC_VER) && _MSC_VER < 1900
+            reinterpret_cast<platform_shared_threadpool*>(&uninit_threadpool.storage)
+#else  // ^^^ VS2013 ^^^ // vvv everything else vvv
+            &uninit_threadpool.storage
+#endif // defined(_MSC_VER) && _MSC_VER < 1900
+    };
 }
 } // namespace
 
@@ -189,11 +205,28 @@ void threadpool::initialize_with_threads(size_t num_threads)
         throw std::runtime_error("the cpprestsdk threadpool has already been initialized");
     }
 }
+
+#if defined(__ANDROID__)
+std::atomic<JavaVM*> JVM;
+
+JNIEnv* get_jvm_env()
+{
+    abort_if_no_jvm();
+    JNIEnv* env = nullptr;
+    auto result = crossplat::JVM.load()->AttachCurrentThread(&env, nullptr);
+    if (result != JNI_OK)
+    {
+        throw std::runtime_error("Could not attach to JVM");
+    }
+
+    return env;
+}
+#endif // defined(__ANDROID__)
 } // namespace crossplat
 
 #if defined(__ANDROID__)
-void cpprest_init(JavaVM* vm) { JVM = vm; }
-#endif
+void cpprest_init(JavaVM* vm) { crossplat::JVM = vm; }
+#endif // defined(__ANDROID__)
 
 std::unique_ptr<crossplat::threadpool> crossplat::threadpool::construct(size_t num_threads)
 {

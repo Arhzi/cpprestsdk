@@ -87,12 +87,10 @@ namespace
 {
 const std::string CRLF("\r\n");
 
-std::string calc_cn_host(const bool secure,
-                         const web::http::uri& baseUri,
-                         const web::http::http_headers& requestHeaders)
+std::string calc_cn_host(const web::http::uri& baseUri, const web::http::http_headers& requestHeaders)
 {
     std::string result;
-    if (secure)
+    if (baseUri.scheme() == U("https"))
     {
         const utility::string_t* encResult;
         const auto hostHeader = requestHeaders.find(_XPLATSTR("Host"));
@@ -332,6 +330,13 @@ public:
 
     void start_reuse() { m_is_reused = true; }
 
+    void enable_no_delay()
+    {
+        boost::asio::ip::tcp::no_delay option(true);
+        boost::system::error_code error_ignored;
+        m_socket.set_option(option, error_ignored);
+    }
+
 private:
     // Guards concurrent access to socket/ssl::stream. This is necessary
     // because timeouts and cancellation can touch the socket at the same time
@@ -470,9 +475,7 @@ class asio_client final : public _http_client_communicator
 public:
     asio_client(http::uri&& address, http_client_config&& client_config)
         : _http_client_communicator(std::move(address), std::move(client_config))
-        , m_resolver(crossplat::threadpool::shared_instance().service())
         , m_pool(std::make_shared<asio_connection_pool>())
-        , m_start_with_ssl(base_uri().scheme() == U("https") && !this->client_config().proxy().is_specified())
     {
     }
 
@@ -482,13 +485,13 @@ public:
 
     std::shared_ptr<asio_connection> obtain_connection(const http_request& req)
     {
-        std::string cn_host = calc_cn_host(m_start_with_ssl, base_uri(), req.headers());
+        std::string cn_host = calc_cn_host(base_uri(), req.headers());
         std::shared_ptr<asio_connection> conn = m_pool->try_acquire(cn_host);
         if (conn == nullptr)
         {
             // Pool was empty. Create a new connection
             conn = std::make_shared<asio_connection>(crossplat::threadpool::shared_instance().service());
-            if (m_start_with_ssl)
+            if (base_uri().scheme() == U("https") && !this->client_config().proxy().is_specified())
             {
                 conn->upgrade_to_ssl(std::move(cn_host), this->client_config().get_ssl_context_callback());
             }
@@ -499,13 +502,8 @@ public:
 
     virtual pplx::task<http_response> propagate(http_request request) override;
 
-    bool start_with_ssl() const CPPREST_NOEXCEPT { return m_start_with_ssl; }
-
-    tcp::resolver m_resolver;
-
 private:
     const std::shared_ptr<asio_connection_pool> m_pool;
-    const bool m_start_with_ssl;
 };
 
 class asio_context final : public request_context, public std::enable_shared_from_this<asio_context>
@@ -520,6 +518,7 @@ public:
         , m_content_length(0)
         , m_needChunked(false)
         , m_timer(client->client_config().timeout<std::chrono::microseconds>())
+        , m_resolver(crossplat::threadpool::shared_instance().service())
         , m_connection(connection)
 #ifdef CPPREST_PLATFORM_ASIO_CERT_VERIFICATION_AVAILABLE
         , m_openssl_failed(false)
@@ -575,7 +574,7 @@ public:
 
             if (m_context->m_http_client->client_config().proxy().credentials().is_set())
             {
-                request_stream << m_context->generate_basic_proxy_auth_header() << CRLF;
+                request_stream << m_context->generate_basic_proxy_auth_header();
             }
 
             request_stream << CRLF;
@@ -585,11 +584,11 @@ public:
             tcp::resolver::query query(utility::conversions::to_utf8string(proxy_host), to_string(proxy_port));
 
             auto client = std::static_pointer_cast<asio_client>(m_context->m_http_client);
-            client->m_resolver.async_resolve(query,
-                                             boost::bind(&ssl_proxy_tunnel::handle_resolve,
-                                                         shared_from_this(),
-                                                         boost::asio::placeholders::error,
-                                                         boost::asio::placeholders::iterator));
+            m_context->m_resolver.async_resolve(query,
+                                                boost::bind(&ssl_proxy_tunnel::handle_resolve,
+                                                            shared_from_this(),
+                                                            boost::asio::placeholders::error,
+                                                            boost::asio::placeholders::iterator));
         }
 
     private:
@@ -616,6 +615,7 @@ public:
             if (!ec)
             {
                 m_context->m_timer.reset();
+                m_context->m_connection->enable_no_delay();
                 m_context->m_connection->async_write(m_request,
                                                      boost::bind(&ssl_proxy_tunnel::handle_write_request,
                                                                  shared_from_this(),
@@ -631,7 +631,15 @@ public:
                 m_context->m_timer.reset();
                 //// Replace the connection. This causes old connection object to go out of scope.
                 auto client = std::static_pointer_cast<asio_client>(m_context->m_http_client);
-                m_context->m_connection = client->obtain_connection(m_context->m_request);
+                try
+                {
+                    m_context->m_connection = client->obtain_connection(m_context->m_request);
+                }
+                catch (...)
+                {
+                    m_context->report_exception(std::current_exception());
+                    return;
+                }
 
                 auto endpoint = *endpoints;
                 m_context->m_connection->async_connect(endpoint,
@@ -688,7 +696,15 @@ public:
                     return;
                 }
 
-                m_context->upgrade_to_ssl();
+                try
+                {
+                    m_context->upgrade_to_ssl();
+                }
+                catch (...)
+                {
+                    m_context->report_exception(std::current_exception());
+                    return;
+                }
 
                 m_ssl_tunnel_established(m_context);
             }
@@ -870,12 +886,11 @@ public:
                 auto tcp_port = proxy_type == http_proxy_type::http ? proxy_port : port;
 
                 tcp::resolver::query query(tcp_host, to_string(tcp_port));
-                auto client = std::static_pointer_cast<asio_client>(ctx->m_http_client);
-                client->m_resolver.async_resolve(query,
-                                                 boost::bind(&asio_context::handle_resolve,
-                                                             ctx,
-                                                             boost::asio::placeholders::error,
-                                                             boost::asio::placeholders::iterator));
+                ctx->m_resolver.async_resolve(query,
+                                              boost::bind(&asio_context::handle_resolve,
+                                                          ctx,
+                                                          boost::asio::placeholders::error,
+                                                          boost::asio::placeholders::iterator));
             }
 
             // Register for notification on cancellation to abort this request.
@@ -894,7 +909,9 @@ public:
             }
         };
 
-        if (proxy_type == http_proxy_type::ssl_tunnel)
+        // Note that we must not try to CONNECT using an already established connection via proxy -- this would send
+        // CONNECT to the end server which is definitely not what we want.
+        if (proxy_type == http_proxy_type::ssl_tunnel && !m_connection->is_reused())
         {
             // The ssl_tunnel_proxy keeps the context alive and then calls back once the ssl tunnel is established via
             // 'start_http_request_flow'
@@ -925,7 +942,7 @@ private:
     void upgrade_to_ssl()
     {
         auto& client = static_cast<asio_client&>(*m_http_client);
-        m_connection->upgrade_to_ssl(calc_cn_host(client.start_with_ssl(), client.base_uri(), m_request.headers()),
+        m_connection->upgrade_to_ssl(calc_cn_host(client.base_uri(), m_request.headers()),
                                      client.client_config().get_ssl_context_callback());
     }
 
@@ -994,12 +1011,13 @@ private:
         m_timer.reset();
         if (!ec)
         {
+            m_connection->enable_no_delay();
             write_request();
         }
         else if (ec.value() == boost::system::errc::operation_canceled ||
                  ec.value() == boost::asio::error::operation_aborted)
         {
-            request_context::report_error(ec.value(), "Request canceled by user.");
+            report_error("Request canceled by user.", ec, httpclient_errorcode_context::connect);
         }
         else if (endpoints == tcp::resolver::iterator())
         {
@@ -1009,7 +1027,15 @@ private:
         {
             // Replace the connection. This causes old connection object to go out of scope.
             auto client = std::static_pointer_cast<asio_client>(m_http_client);
-            m_connection = client->obtain_connection(m_request);
+            try
+            {
+                m_connection = client->obtain_connection(m_request);
+            }
+            catch (...)
+            {
+                request_context::report_exception(std::current_exception());
+                return;
+            }
 
             auto endpoint = *endpoints;
             m_connection->async_connect(
@@ -1024,6 +1050,10 @@ private:
         if (ec)
         {
             report_error("Error resolving address", ec, httpclient_errorcode_context::connect);
+        }
+        else if (endpoints == tcp::resolver::iterator())
+        {
+            report_error("Failed to resolve address", ec, httpclient_errorcode_context::connect);
         }
         else
         {
@@ -1214,8 +1244,8 @@ private:
         }
 
         const auto this_request = shared_from_this();
-        const auto readSize = static_cast<size_t>(
-            std::min(static_cast<uint64_t>(m_http_client->client_config().chunksize()), m_content_length - m_uploaded));
+        const auto readSize = static_cast<size_t>((std::min)(
+            static_cast<uint64_t>(m_http_client->client_config().chunksize()), m_content_length - m_uploaded));
         auto readbuf = _get_readbuffer();
         readbuf.getn(boost::asio::buffer_cast<uint8_t*>(m_body_buf.prepare(readSize)), readSize)
             .then([this_request AND_CAPTURE_MEMBER_FUNCTION_POINTERS](pplx::task<size_t> op) {
@@ -1301,6 +1331,15 @@ private:
                 return;
             }
 
+            web::http::http_version parsed_version = web::http::http_version::from_string(http_version);
+            m_response._get_impl()->_set_http_version(parsed_version);
+
+            // if HTTP version is 1.0 then disable 'Keep-Alive' by default
+            if (parsed_version == web::http::http_versions::HTTP_1_0)
+            {
+                m_connection->set_keep_alive(false);
+            }
+
             read_headers();
         }
         else
@@ -1321,8 +1360,49 @@ private:
             // Create a new context and copy the request object, completion event and
             // cancellation registration to maintain the old state.
             // This also obtains a new connection from pool.
-            auto new_ctx = create_request_context(m_http_client, m_request);
-            new_ctx->m_request._get_impl()->instream().seek(0);
+            std::shared_ptr<request_context> new_ctx;
+            try
+            {
+                new_ctx = create_request_context(m_http_client, m_request);
+            }
+            catch (...)
+            {
+                report_exception(std::current_exception());
+                return;
+            }
+
+            // If the request contains a valid instream, we try to rewind it to
+            // replay the just-failed request. Otherwise we assume that no data
+            // was sent in the first place.
+            const auto& instream = new_ctx->m_request._get_impl()->instream();
+            if (instream)
+            {
+                // As stated in the commit message of f4f2348, we might encounter
+                // streams that are not capable of rewinding and hence resending the
+                // request is not possible. We cannot recover from this condition and
+                // need to escalate it to the using code.
+                if (!instream.can_seek())
+                {
+                    report_error("cannot rewind input stream for connection re-establishment",
+                                 ec,
+                                 httpclient_errorcode_context::readheader);
+                    return;
+                }
+
+                try
+                {
+                    // Rewinding the stream might throw, in which case we cannot do the
+                    // connection re-establishment transparently. I.e. report the exception
+                    // to the calling code.
+                    instream.seek(0);
+                }
+                catch (...)
+                {
+                    report_exception(std::current_exception());
+                    return;
+                }
+            }
+
             new_ctx->m_request_completion = m_request_completion;
             new_ctx->m_cancellationRegistration = m_cancellationRegistration;
 
@@ -1359,11 +1439,14 @@ private:
 
                 if (boost::iequals(name, header_names::connection))
                 {
-                    // This assumes server uses HTTP/1.1 so that 'Keep-Alive' is the default,
+                    // If the server uses HTTP/1.1, then 'Keep-Alive' is the default,
                     // so connection is explicitly closed only if we get "Connection: close".
-                    // We don't handle HTTP/1.0 server here. HTTP/1.0 server would need
-                    // to respond using 'Connection: Keep-Alive' every time.
-                    m_connection->set_keep_alive(!boost::iequals(value, U("close")));
+                    // If the server uses HTTP/1.0, it would need to respond using
+                    // 'Connection: Keep-Alive' every time.
+                    if (m_response._get_impl()->http_version() != web::http::http_versions::HTTP_1_0)
+                        m_connection->set_keep_alive(!boost::iequals(value, U("close")));
+                    else
+                        m_connection->set_keep_alive(boost::iequals(value, U("Keep-Alive")));
                 }
 
                 m_response.headers().add(utility::conversions::to_string_t(std::move(name)),
@@ -1371,8 +1454,8 @@ private:
             }
         }
 
-        m_content_length = std::numeric_limits<size_t>::max(); // Without Content-Length header, size should be same as
-                                                               // TCP stream - set it size_t max.
+        m_content_length = (std::numeric_limits<size_t>::max)(); // Without Content-Length header, size should be same
+                                                                 // as TCP stream - set it size_t max.
         m_response.headers().match(header_names::content_length, m_content_length);
 
         if (!this->handle_compression())
@@ -1414,8 +1497,8 @@ private:
             if (!needChunked)
             {
                 async_read_until_buffersize(
-                    static_cast<size_t>(
-                        std::min(m_content_length, static_cast<uint64_t>(m_http_client->client_config().chunksize()))),
+                    static_cast<size_t>((std::min)(m_content_length,
+                                                   static_cast<uint64_t>(m_http_client->client_config().chunksize()))),
                     boost::bind(
                         &asio_context::handle_read_content, shared_from_this(), boost::asio::placeholders::error));
             }
@@ -1499,7 +1582,7 @@ private:
             {
                 if (inbytes)
                 {
-                    output.resize(output.size() + std::max(input_size, static_cast<size_t>(1024)));
+                    output.resize(output.size() + (std::max)(input_size, static_cast<size_t>(1024)));
                 }
                 got = m_decompressor->decompress(input + inbytes,
                                                  input_size - inbytes,
@@ -1637,7 +1720,7 @@ private:
 
         if (ec)
         {
-            if (ec == boost::asio::error::eof && m_content_length == std::numeric_limits<size_t>::max())
+            if (ec == boost::asio::error::eof && m_content_length == (std::numeric_limits<size_t>::max)())
             {
                 m_content_length = m_downloaded + m_body_buf.size();
             }
@@ -1669,7 +1752,7 @@ private:
             const auto this_request = shared_from_this();
 
             auto read_size = static_cast<size_t>(
-                std::min(static_cast<uint64_t>(m_body_buf.size()), m_content_length - m_downloaded));
+                (std::min)(static_cast<uint64_t>(m_body_buf.size()), m_content_length - m_downloaded));
 
             if (m_decompressor)
             {
@@ -1692,7 +1775,7 @@ private:
                         this_request->m_downloaded += static_cast<uint64_t>(read_size);
 
                         this_request->async_read_until_buffersize(
-                            static_cast<size_t>(std::min(
+                            static_cast<size_t>((std::min)(
                                 static_cast<uint64_t>(this_request->m_http_client->client_config().chunksize()),
                                 this_request->m_content_length - this_request->m_downloaded)),
                             boost::bind(
@@ -1721,7 +1804,7 @@ private:
                                 this_request->m_downloaded += static_cast<uint64_t>(read_size);
                                 this_request->m_body_buf.consume(read_size);
                                 this_request->async_read_until_buffersize(
-                                    static_cast<size_t>(std::min(
+                                    static_cast<size_t>((std::min)(
                                         static_cast<uint64_t>(this_request->m_http_client->client_config().chunksize()),
                                         this_request->m_content_length - this_request->m_downloaded)),
                                     boost::bind(&asio_context::handle_read_content,
@@ -1747,7 +1830,7 @@ private:
                             this_request->m_downloaded += static_cast<uint64_t>(writtenSize);
                             this_request->m_body_buf.consume(writtenSize);
                             this_request->async_read_until_buffersize(
-                                static_cast<size_t>(std::min(
+                                static_cast<size_t>((std::min)(
                                     static_cast<uint64_t>(this_request->m_http_client->client_config().chunksize()),
                                     this_request->m_content_length - this_request->m_downloaded)),
                                 boost::bind(&asio_context::handle_read_content,
@@ -1855,6 +1938,7 @@ private:
     uint64_t m_content_length;
     bool m_needChunked;
     timeout_timer m_timer;
+    tcp::resolver m_resolver;
     boost::asio::streambuf m_body_buf;
     std::shared_ptr<asio_connection> m_connection;
 
@@ -1893,10 +1977,174 @@ void asio_client::send_request(const std::shared_ptr<request_context>& request_c
     ctx->start_request();
 }
 
+static bool is_retrieval_redirection(status_code code)
+{
+    // See https://tools.ietf.org/html/rfc7231#section-6.4
+
+    switch (code)
+    {
+    case status_codes::MovedPermanently:
+        // "For historical reasons, a user agent MAY change the request method
+        // from POST to GET for the subsequent request."
+        return true;
+    case status_codes::Found:
+        // "For historical reasons, a user agent MAY change the request method
+        // from POST to GET for the subsequent request."
+        return true;
+    case status_codes::SeeOther:
+        // "A user agent can perform a [GET or HEAD] request. It is primarily
+        // used to allow the output of a POST action to redirect the user agent
+        // to a selected resource."
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool is_unchanged_redirection(status_code code)
+{
+    // See https://tools.ietf.org/html/rfc7231#section-6.4
+    // and https://tools.ietf.org/html/rfc7538#section-3
+
+    switch (code)
+    {
+    case status_codes::TemporaryRedirect:
+        // "The user agent MUST NOT change the request method if it performs an
+        // automatic redirection to that URI."
+        return true;
+    case status_codes::PermanentRedirect:
+        // This status code "does not allow changing the request method from POST
+        // to GET."
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool is_recognized_redirection(status_code code)
+{
+    // other 3xx status codes, e.g. 300 Multiple Choices, are not handled
+    // and should be handled externally
+    return is_retrieval_redirection(code) || is_unchanged_redirection(code);
+}
+
+static bool is_retrieval_request(method method)
+{
+    return methods::GET == method || methods::HEAD == method;
+}
+
+static const std::vector<utility::string_t> request_body_header_names =
+{
+    header_names::content_encoding,
+    header_names::content_language,
+    header_names::content_length,
+    header_names::content_location,
+    header_names::content_type
+};
+
+// A request continuation that follows redirects according to the specified configuration.
+// This implementation only supports retrieval redirects, as it cannot redirect e.g. a POST request
+// using the same method since the request body may have been consumed.
+struct http_redirect_follower
+{
+    http_client_config config;
+    std::vector<uri> followed_urls;
+    http_request redirect;
+
+    http_redirect_follower(http_client_config config, const http_request& request);
+
+    uri url_to_follow(const http_response& response) const;
+
+    pplx::task<http_response> operator()(http_response response);
+};
+
+http_redirect_follower::http_redirect_follower(http_client_config config, const http_request& request)
+    : config(std::move(config))
+    , followed_urls(1, request.absolute_uri())
+    , redirect(request.method())
+{
+    // Stash the original request URL, etc. to be prepared for an automatic redirect
+
+    // Basically, it makes sense to send the redirects with the same headers as the original request
+    redirect.headers() = request.headers();
+    // However, this implementation only supports retrieval redirects, with no body, so Content-* headers
+    // should be removed
+    for (const auto& content_header : request_body_header_names)
+    {
+        redirect.headers().remove(content_header);
+    }
+
+    redirect._set_cancellation_token(request._cancellation_token());
+}
+
+uri http_redirect_follower::url_to_follow(const http_response& response) const
+{
+    // Return immediately if the response is not a supported redirection
+    if (!is_recognized_redirection(response.status_code()))
+        return{};
+
+    // Although not required by RFC 7231, config may limit the number of automatic redirects
+    // (followed_urls includes the initial request URL, hence '<' here)
+    if (config.max_redirects() < followed_urls.size())
+        return{};
+
+    // Can't very well automatically redirect if the server hasn't provided a Location
+    const auto location = response.headers().find(header_names::location);
+    if (response.headers().end() == location)
+        return{};
+
+    uri to_follow(followed_urls.back().resolve_uri(location->second));
+
+    // Config may prohibit automatic redirects from HTTPS to HTTP
+    if (!config.https_to_http_redirects() && followed_urls.back().scheme() == _XPLATSTR("https")
+        && to_follow.scheme() != _XPLATSTR("https"))
+        return{};
+
+    // "A client SHOULD detect and intervene in cyclical redirections."
+    if (followed_urls.end() != std::find(followed_urls.begin(), followed_urls.end(), to_follow))
+        return{};
+
+    return to_follow;
+}
+
+pplx::task<http_response> http_redirect_follower::operator()(http_response response)
+{
+    // Return immediately if the response doesn't indicate a valid automatic redirect
+    uri to_follow = url_to_follow(response);
+    if (to_follow.is_empty())
+        return pplx::task_from_result(response);
+
+    // This implementation only supports retrieval redirects, as it cannot redirect e.g. a POST request
+    // using the same method since the request body may have been consumed.
+    if (!is_retrieval_request(redirect.method()) && !is_retrieval_redirection(response.status_code()))
+        return pplx::task_from_result(response);
+
+    if (!is_retrieval_request(redirect.method()))
+        redirect.set_method(methods::GET);
+
+    // If the reply to this request is also a redirect, we want visibility of that
+    auto config_no_redirects = config;
+    config_no_redirects.set_max_redirects(0);
+    http_client client(to_follow, config_no_redirects);
+
+    // Stash the redirect request URL and make the request with the same continuation
+    auto request_task = client.request(redirect, redirect._cancellation_token());
+    followed_urls.push_back(std::move(to_follow));
+    return request_task.then(std::move(*this));
+}
+
 pplx::task<http_response> asio_client::propagate(http_request request)
 {
     auto self = std::static_pointer_cast<_http_client_communicator>(shared_from_this());
-    auto context = details::asio_context::create_request_context(self, request);
+    std::shared_ptr<request_context> context;
+    try
+    {
+        context = details::asio_context::create_request_context(self, request);
+    }
+    catch (...)
+    {
+        return pplx::task_from_exception<http_response>(std::current_exception());
+    }
 
     // Use a task to externally signal the final result and completion of the task.
     auto result_task = pplx::create_task(context->m_request_completion);
@@ -1904,7 +2152,9 @@ pplx::task<http_response> asio_client::propagate(http_request request)
     // Asynchronously send the response with the HTTP client implementation.
     this->async_send_request(context);
 
-    return result_task;
+    return client_config().max_redirects() > 0
+        ? result_task.then(http_redirect_follower(client_config(), request))
+        : result_task;
 }
 } // namespace details
 } // namespace client

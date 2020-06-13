@@ -73,7 +73,7 @@ SUITE(compression_tests)
                    << " / " << _size;
                 throw std::runtime_error(std::move(ss.str()));
             }
-            bytes = std::min(input_size, output_size);
+            bytes = (std::min)(input_size, output_size);
             if (bytes)
             {
                 memcpy(output, input, bytes);
@@ -128,7 +128,7 @@ SUITE(compression_tests)
                    << " / " << _size;
                 throw std::runtime_error(std::move(ss.str()));
             }
-            bytes = std::min(input_size, output_size);
+            bytes = (std::min)(input_size, output_size);
             if (bytes)
             {
                 memcpy(output, input, bytes);
@@ -206,7 +206,7 @@ SUITE(compression_tests)
         std::vector<uint8_t> cmp_buffer(buffer_size);
         size_t cmpsize = buffer_size;
         size_t csize = 0;
-        operation_result r = {0};
+        operation_result r = {};
         operation_hint hint = operation_hint::has_more;
         for (i = 0; i < buffer_size || csize == cmpsize || !r.done; i += r.input_bytes_processed)
         {
@@ -218,18 +218,18 @@ SUITE(compression_tests)
             if (csize == cmpsize)
             {
                 // extend the output buffer if there may be more compressed bytes to retrieve
-                cmpsize += std::min(chunk_size, (size_t)200);
+                cmpsize += (std::min)(chunk_size, (size_t)200);
                 cmp_buffer.resize(cmpsize);
             }
             r = compressor
                     ->compress(input_buffer.data() + i,
-                               std::min(chunk_size, buffer_size - i),
+                               (std::min)(chunk_size, buffer_size - i),
                                cmp_buffer.data() + csize,
-                               std::min(chunk_size, cmpsize - csize),
+                               (std::min)(chunk_size, cmpsize - csize),
                                hint)
                     .get();
-            VERIFY_IS_TRUE(r.input_bytes_processed == std::min(chunk_size, buffer_size - i) ||
-                           r.output_bytes_produced == std::min(chunk_size, cmpsize - csize));
+            VERIFY_IS_TRUE(r.input_bytes_processed == (std::min)(chunk_size, buffer_size - i) ||
+                           r.output_bytes_produced == (std::min)(chunk_size, cmpsize - csize));
             VERIFY_IS_TRUE(hint == operation_hint::is_last || !r.done);
             chunk_sizes.push_back(r.output_bytes_produced);
             csize += r.output_bytes_produced;
@@ -262,7 +262,7 @@ SUITE(compression_tests)
                         ->decompress(cmp_buffer.data() + nn,
                                      *it,
                                      dcmp_buffer.data() + dsize,
-                                     std::min(chunk_size, buffer_size - dsize),
+                                     (std::min)(chunk_size, buffer_size - dsize),
                                      hint)
                         .get();
                 nn += *it;
@@ -281,14 +281,14 @@ SUITE(compression_tests)
         memset(dcmp_buffer.data(), 0, dcmp_buffer.size());
         do
         {
-            size_t n = std::min(chunk_size, csize - nn);
+            size_t n = (std::min)(chunk_size, csize - nn);
             do
             {
                 r = decompressor
                         ->decompress(cmp_buffer.data() + nn,
                                      n,
                                      dcmp_buffer.data() + dsize,
-                                     std::min(chunk_size, buffer_size - dsize),
+                                     (std::min)(chunk_size, buffer_size - dsize),
                                      operation_hint::has_more)
                         .get();
                 dsize += r.output_bytes_produced;
@@ -361,9 +361,9 @@ SUITE(compression_tests)
                 if (!cfactory)
                 {
                     auto size = tuples[i][0];
-                    compress_and_decompress(utility::details::make_unique<fake_provider>(tuples[i][0]),
-                                            utility::details::make_unique<fake_provider>(tuples[i][0]),
-                                            tuples[i][0],
+                    compress_and_decompress(utility::details::make_unique<fake_provider>(size),
+                                            utility::details::make_unique<fake_provider>(size),
+                                            size,
                                             tuples[i][1],
                                             !!j);
                 }
@@ -376,19 +376,31 @@ SUITE(compression_tests)
         }
     }
 
-    TEST_FIXTURE(uri_address, compress_and_decompress)
+    TEST_FIXTURE(uri_address, compress_and_decompress_fake)
     {
         compress_test(nullptr, nullptr); // FAKE
+    }
+
+    TEST_FIXTURE(uri_address, compress_and_decompress_gzip)
+    {
         if (builtin::algorithm::supported(builtin::algorithm::GZIP))
         {
             compress_test(builtin::get_compress_factory(builtin::algorithm::GZIP),
                           builtin::get_decompress_factory(builtin::algorithm::GZIP));
         }
+    }
+
+    TEST_FIXTURE(uri_address, compress_and_decompress_deflate)
+    {
         if (builtin::algorithm::supported(builtin::algorithm::DEFLATE))
         {
             compress_test(builtin::get_compress_factory(builtin::algorithm::DEFLATE),
                           builtin::get_decompress_factory(builtin::algorithm::DEFLATE));
         }
+    }
+
+    TEST_FIXTURE(uri_address, compress_and_decompress_brotli)
+    {
         if (builtin::algorithm::supported(builtin::algorithm::BROTLI))
         {
             compress_test(builtin::get_compress_factory(builtin::algorithm::BROTLI),
@@ -770,7 +782,7 @@ SUITE(compression_tests)
         }
 #endif // _WIN32
 
-        auto extra_size = [](size_t bufsz) -> size_t { return std::max(static_cast<size_t>(128), bufsz / 1000); };
+        auto extra_size = [](size_t bufsz) -> size_t { return (std::max)(static_cast<size_t>(128), bufsz / 1000); };
 
         // Test decompression both explicitly through the test server and implicitly through the listener;
         // this is the top-level loop in order to avoid thrashing the listeners more than necessary

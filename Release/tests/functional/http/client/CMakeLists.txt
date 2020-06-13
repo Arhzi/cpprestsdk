@@ -16,6 +16,7 @@ set(SOURCES
   pipeline_stage_tests.cpp
   progress_handler_tests.cpp
   proxy_tests.cpp
+  redirect_tests.cpp
   request_helper_tests.cpp
   request_stream_tests.cpp
   request_uri_tests.cpp
@@ -32,18 +33,7 @@ else()
   target_link_libraries(httpclient_test PRIVATE httptest_utilities)
 endif()
 
-if(MSVC)
-  get_target_property(_srcs httpclient_test SOURCES)
-
-  if(NOT CMAKE_GENERATOR MATCHES "Visual Studio .*")
-    set_property(SOURCE stdafx.cpp APPEND PROPERTY OBJECT_OUTPUTS "${CMAKE_CURRENT_BINARY_DIR}/client-tests-stdafx.pch")
-    set_property(SOURCE ${_srcs} APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/client-tests-stdafx.pch")
-  endif()
-
-  set_source_files_properties(stdafx.cpp PROPERTIES COMPILE_FLAGS "/Ycstdafx.h /Fpclient-tests-stdafx.pch")
-  target_sources(httpclient_test PRIVATE stdafx.cpp)
-  target_compile_options(httpclient_test PRIVATE /Yustdafx.h /Fpclient-tests-stdafx.pch)
-endif()
+configure_pch(httpclient_test stdafx.h stdafx.cpp)
 
 if(NOT WIN32)
   cpprest_find_boost()

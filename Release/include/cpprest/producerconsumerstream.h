@@ -47,6 +47,7 @@ public:
     /// </summary>
     basic_producer_consumer_buffer(size_t alloc_size)
         : streambuf_state_manager<_CharType>(std::ios_base::out | std::ios_base::in)
+        , m_mode(std::ios_base::in)
         , m_alloc_size(alloc_size)
         , m_allocBlock(nullptr)
         , m_total(0)
@@ -438,7 +439,7 @@ private:
             _CharType* beg = rbegin();
             _CharType* end = rbegin() + countRead;
 
-#ifdef _WIN32
+#if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
             // Avoid warning C4996: Use checked iterators under SECURE_SCL
             std::copy(beg, end, stdext::checked_array_iterator<_CharType*>(dest, count));
 #else
@@ -461,7 +462,7 @@ private:
 
             const _CharType* srcEnd = src + countWritten;
 
-#ifdef _WIN32
+#if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
             // Avoid warning C4996: Use checked iterators under SECURE_SCL
             std::copy(src, srcEnd, stdext::checked_array_iterator<_CharType*>(wbegin(), static_cast<size_t>(avail)));
 #else

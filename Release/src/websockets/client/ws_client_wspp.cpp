@@ -62,6 +62,10 @@
 #pragma warning(disable : 4503)
 #endif
 
+// Workaround data-race on websocketpp's _htonll function, see
+// https://github.com/Microsoft/cpprestsdk/pull/1082
+auto avoidDataRaceOnHtonll = websocketpp::lib::net::_htonll(0);
+
 // This is a hack to avoid memory leak reports from the debug MSVC CRT for all
 // programs using the library: ASIO calls SSL_library_init() which calls
 // SSL_COMP_get_compression_methods(), which allocates some heap memory and the
@@ -189,6 +193,10 @@ public:
                     new boost::asio::ssl::context(boost::asio::ssl::context::sslv23));
                 sslContext->set_default_verify_paths();
                 sslContext->set_options(boost::asio::ssl::context::default_workarounds);
+                if (m_config.get_ssl_context_callback())
+                {
+                    m_config.get_ssl_context_callback()(*sslContext);
+                }
                 if (m_config.validate_certificates())
                 {
                     sslContext->set_verify_mode(boost::asio::ssl::context::verify_peer);
@@ -284,7 +292,7 @@ public:
 
         client.set_fail_handler([this](websocketpp::connection_hdl con_hdl) {
             _ASSERTE(m_state == CONNECTING);
-            shutdown_wspp_impl<WebsocketConfigType>(con_hdl, true);
+            this->shutdown_wspp_impl<WebsocketConfigType>(con_hdl, true);
         });
 
         client.set_message_handler(
@@ -317,9 +325,36 @@ public:
                 }
             });
 
+        client.set_ping_handler([this](websocketpp::connection_hdl, const std::string& msg) {
+            if (m_external_message_handler)
+            {
+                _ASSERTE(m_state >= CONNECTED && m_state < CLOSED);
+                websocket_incoming_message incoming_msg;
+
+                incoming_msg.m_msg_type = websocket_message_type::ping;
+                incoming_msg.m_body = concurrency::streams::container_buffer<std::string>(msg);
+
+                m_external_message_handler(incoming_msg);
+            }
+            return true;
+        });
+
+        client.set_pong_handler([this](websocketpp::connection_hdl, const std::string& msg) {
+            if (m_external_message_handler)
+            {
+                _ASSERTE(m_state >= CONNECTED && m_state < CLOSED);
+                websocket_incoming_message incoming_msg;
+
+                incoming_msg.m_msg_type = websocket_message_type::pong;
+                incoming_msg.m_body = concurrency::streams::container_buffer<std::string>(msg);
+
+                m_external_message_handler(incoming_msg);
+            }
+        });
+
         client.set_close_handler([this](websocketpp::connection_hdl con_hdl) {
             _ASSERTE(m_state != CLOSED);
-            shutdown_wspp_impl<WebsocketConfigType>(con_hdl, false);
+            this->shutdown_wspp_impl<WebsocketConfigType>(con_hdl, false);
         });
 
         // Set User Agent specified by the user. This needs to happen before any connection is created
@@ -392,23 +427,26 @@ public:
 
         m_state = CONNECTING;
         client.connect(con);
-        m_thread = std::thread([&client]() {
+        {
+            std::lock_guard<std::mutex> lock(m_wspp_client_lock);
+            m_thread = std::thread([&client]() {
 #if defined(__ANDROID__)
-            crossplat::get_jvm_env();
+                crossplat::get_jvm_env();
 #endif
-            client.run();
+                client.run();
 #if defined(__ANDROID__)
-            crossplat::JVM.load()->DetachCurrentThread();
+                crossplat::JVM.load()->DetachCurrentThread();
 #endif
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
-            // OpenSSL stores some per thread state that never will be cleaned up until
-            // the dll is unloaded. If static linking, like we do, the state isn't cleaned up
-            // at all and will be reported as leaks.
-            // See http://www.openssl.org/support/faq.html#PROG13
-            ERR_remove_thread_state(nullptr);
+                // OpenSSL stores some per thread state that never will be cleaned up until
+                // the dll is unloaded. If static linking, like we do, the state isn't cleaned up
+                // at all and will be reported as leaks.
+                // See http://www.openssl.org/support/faq.html#PROG13
+                ERR_remove_thread_state(nullptr);
 #endif
-        });
+            });
+        } // unlock
         return pplx::create_task(m_connect_tce);
     }
 
@@ -423,12 +461,14 @@ public:
         {
             case websocket_message_type::text_message:
             case websocket_message_type::binary_message:
+            case websocket_message_type::ping:
             case websocket_message_type::pong: break;
             default: return pplx::task_from_exception<void>(websocket_exception("Message Type not supported."));
         }
 
         const auto length = msg.m_length;
-        if (length == 0 && msg.m_msg_type != websocket_message_type::pong)
+        if (length == 0 && msg.m_msg_type != websocket_message_type::ping &&
+            msg.m_msg_type != websocket_message_type::pong)
         {
             return pplx::task_from_exception<void>(websocket_exception("Cannot send empty message."));
         }
@@ -639,14 +679,14 @@ private:
         client.stop_perpetual();
 
         // Can't join thread directly since it is the current thread.
-        pplx::create_task([this, connecting, ec, closeCode, reason] {
-            if (m_thread.joinable())
+        pplx::create_task([] {}).then([this, connecting, ec, closeCode, reason]() mutable {
             {
-                m_thread.join();
-            }
-
-            // Delete client to make sure Websocketpp cleans up all Boost.Asio portions.
-            m_client.reset();
+                std::lock_guard<std::mutex> lock(m_wspp_client_lock);
+                if (m_thread.joinable())
+                {
+                    m_thread.join();
+                }
+            } // unlock
 
             if (connecting)
             {
@@ -680,7 +720,18 @@ private:
             case websocket_message_type::binary_message:
                 client.send(this_client->m_con, sp_allocated.get(), length, websocketpp::frame::opcode::binary, ec);
                 break;
-            case websocket_message_type::pong: client.pong(this_client->m_con, "", ec); break;
+            case websocket_message_type::ping:
+            {
+                std::string s(reinterpret_cast<char*>(sp_allocated.get()), length);
+                client.ping(this_client->m_con, s, ec);
+                break;
+            }
+            case websocket_message_type::pong:
+            {
+                std::string s(reinterpret_cast<char*>(sp_allocated.get()), length);
+                client.pong(this_client->m_con, s, ec);
+                break;
+            }
             default:
                 // This case should have already been filtered above.
                 std::abort();
@@ -746,8 +797,6 @@ private:
         websocketpp::client<websocketpp::config::asio_tls_client> m_client;
     };
 
-    websocketpp::connection_hdl m_con;
-
     pplx::task_completion_event<void> m_connect_tce;
     pplx::task_completion_event<void> m_close_tce;
 
@@ -755,6 +804,7 @@ private:
     std::mutex m_wspp_client_lock;
     State m_state;
     std::unique_ptr<websocketpp_client_base> m_client;
+    websocketpp::connection_hdl m_con;
 
     // Queue to track pending sends
     outgoing_msg_queue m_out_queue;

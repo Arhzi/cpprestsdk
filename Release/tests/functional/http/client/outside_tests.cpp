@@ -50,14 +50,12 @@ SUITE(outside_tests)
 
             // CNN's main page doesn't use chunked transfer encoding.
             http_response response = client.request(methods::GET).get();
-            auto code = response.status_code();
-            VERIFY_IS_TRUE(code == status_codes::OK || code == status_codes::MovedPermanently);
+            VERIFY_ARE_EQUAL(status_codes::OK, response.status_code());
             response.content_ready().wait();
 
             // CNN's other pages do use chunked transfer encoding.
             response = client.request(methods::GET, U("us")).get();
-            code = response.status_code();
-            VERIFY_IS_TRUE(code == status_codes::OK || code == status_codes::MovedPermanently);
+            VERIFY_ARE_EQUAL(status_codes::OK, response.status_code());
             response.content_ready().wait();
         });
     }
@@ -116,7 +114,7 @@ SUITE(outside_tests)
         });
     }
 
-#if (defined(_MSC_VER) && (_MSC_VER >= 1800)) && !CPPREST_FORCE_PPLX
+#if (defined(_MSC_VER) && (_MSC_VER >= 1900)) && !CPPREST_FORCE_PPLX
     TEST_FIXTURE(uri_address, multiple_https_requests_sync_scheduler)
     {
         struct sync_scheduler : public scheduler_interface
@@ -175,9 +173,8 @@ SUITE(outside_tests)
     TEST_FIXTURE(uri_address, no_transfer_encoding_content_length)
     {
         handle_timeout([] {
-            http_client client(
-                U("http://ws.audioscrobbler.com/2.0/"
-                  "?method=artist.gettoptracks&artist=cher&api_key=6fcd59047568e89b1615975081258990&format=json"));
+            http_client client(U("http://ws.audioscrobbler.com/2.0/") U(
+                "?method=artist.gettoptracks&artist=cher&api_key=6fcd59047568e89b1615975081258990&format=json"));
 
             client.request(methods::GET)
                 .then([](http_response response) {
@@ -229,7 +226,7 @@ SUITE(outside_tests)
 
     TEST(server_hostname_mismatch) { test_failed_ssl_cert(U("https://wrong.host.badssl.com/")); }
 
-#if !defined(__cplusplus_winrt)
+#if !defined(__cplusplus_winrt) && !defined(CPPREST_FORCE_HTTP_CLIENT_WINHTTPPAL)
     TEST(server_hostname_host_override)
     {
         handle_timeout([] {
@@ -249,12 +246,9 @@ SUITE(outside_tests)
         http_request req(methods::GET);
         req.headers().add(U("Host"), U("en.wikipedia.org"));
         auto response = client.request(req).get();
-        // WinHTTP will transparently follow the HTTP 301 upgrade request redirect,
-        // ASIO does not and will return the 301 directly.
-        const auto statusCode = response.status_code();
-        CHECK(statusCode == status_codes::OK || statusCode == status_codes::MovedPermanently);
+        VERIFY_ARE_EQUAL(status_codes::OK, response.status_code());
     }
-#endif // !defined(__cplusplus_winrt)
+#endif // !defined(__cplusplus_winrt) && !defined(CPPREST_FORCE_HTTP_CLIENT_WINHTTPPAL)
 
     TEST(server_cert_expired) { test_failed_ssl_cert(U("https://expired.badssl.com/")); }
 
@@ -291,77 +285,6 @@ SUITE(outside_tests)
         });
     }
 #endif // !defined(__cplusplus_winrt)
-
-    TEST_FIXTURE(uri_address, outside_ssl_json)
-    {
-        // Create URI for:
-        // https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=UUF1hMUVwlrvlVMjUGOZExgg&key=AIzaSyAviHxf_y0SzNoAq3iKqvWVE4KQ0yylsnk
-        uri_builder playlistUri(U("https://www.googleapis.com/youtube/v3/playlistItems?"));
-        playlistUri.append_query(U("part"), U("snippet"));
-        playlistUri.append_query(U("playlistId"), U("UUF1hMUVwlrvlVMjUGOZExgg"));
-        playlistUri.append_query(U("key"), U("AIzaSyAviHxf_y0SzNoAq3iKqvWVE4KQ0yylsnk"));
-
-        // Send request
-        web::http::client::http_client playlistClient(playlistUri.to_uri());
-
-        handle_timeout([&] {
-            // Retry up to 4 times.
-            for (int i = 0; i < 4; ++i)
-            {
-                try
-                {
-                    playlistClient.request(methods::GET)
-                        .then([=](http_response playlistResponse) -> pplx::task<json::value> {
-                            return playlistResponse.extract_json();
-                        })
-                        .then([=](json::value v) {
-                            int count = 0;
-                            auto& obj = v.as_object();
-
-                            VERIFY_ARE_NOT_EQUAL(obj.find(U("pageInfo")), obj.end());
-                            VERIFY_ARE_NOT_EQUAL(obj.find(U("items")), obj.end());
-
-                            auto& items = obj[U("items")];
-
-                            for (auto iter = items.as_array().cbegin(); iter != items.as_array().cend(); ++iter)
-                            {
-                                const auto& item = *iter;
-                                auto iSnippet = item.as_object().find(U("snippet"));
-                                if (iSnippet == item.as_object().end())
-                                {
-                                    throw std::runtime_error("snippet key not found");
-                                }
-                                auto iTitle = iSnippet->second.as_object().find(U("title"));
-                                if (iTitle == iSnippet->second.as_object().end())
-                                {
-                                    throw std::runtime_error("title key not found");
-                                }
-                                auto name = iTitle->second.serialize();
-                                count++;
-                            }
-                            VERIFY_ARE_EQUAL(3, count); // Update this accordingly, if the number of items changes
-                        })
-                        .wait();
-                    break;
-                }
-                catch (web::http::http_exception const& e)
-                {
-#if defined(_MSC_VER) && !defined(__cplusplus_winrt)
-                    if (e.error_code().value() != API_QUERY_DATA_AVAILABLE || i == 3)
-                    {
-                        // If we didn't get a "connection broken" error (or we are on the last retry), rethrow it
-                        throw;
-                    }
-#else
-                    CASABLANCA_UNREFERENCED_PARAMETER(e);
-                    throw;
-#endif
-                    os_utilities::sleep(1000);
-                }
-            }
-        });
-    }
-
 } // SUITE(outside_tests)
 
 } // namespace client

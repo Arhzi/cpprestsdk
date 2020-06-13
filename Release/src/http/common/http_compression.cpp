@@ -17,21 +17,16 @@
 // it. CPPREST_EXCLUDE_BROTLI is set if we want to explicitly disable Brotli compression support.
 // CPPREST_EXCLUDE_WEBSOCKETS is a flag that now essentially means "no external dependencies". TODO: Rename
 
-#if __APPLE__
-#include "TargetConditionals.h"
-#if defined(TARGET_OS_MAC)
-#if !defined(CPPREST_EXCLUDE_COMPRESSION)
-#define CPPREST_HTTP_COMPRESSION
-#endif // !defined(CPPREST_EXCLUDE_COMPRESSION)
-#endif // defined(TARGET_OS_MAC)
-#elif defined(_WIN32) && (!defined(WINAPI_FAMILY) || WINAPI_PARTITION_DESKTOP)
 #if !defined(CPPREST_EXCLUDE_WEBSOCKETS) && !defined(CPPREST_EXCLUDE_COMPRESSION)
 #define CPPREST_HTTP_COMPRESSION
 #endif // !defined(CPPREST_EXCLUDE_WEBSOCKETS) && !defined(CPPREST_EXCLUDE_COMPRESSION)
-#endif
 
 #if defined(CPPREST_HTTP_COMPRESSION)
 #include <zlib.h>
+// zconf.h may define compress
+#ifdef compress
+#undef compress
+#endif
 #if !defined(CPPREST_EXCLUDE_BROTLI)
 #define CPPREST_BROTLI_COMPRESSION
 #endif // CPPREST_EXCLUDE_BROTLI
@@ -93,7 +88,7 @@ public:
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wtautological-constant-compare"
 #endif // __clang__
-        if (input_size > std::numeric_limits<uInt>::max() || output_size > std::numeric_limits<uInt>::max())
+        if (input_size > (std::numeric_limits<uInt>::max)() || output_size > (std::numeric_limits<uInt>::max)())
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif // __clang__
@@ -194,7 +189,7 @@ public:
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wtautological-constant-compare"
 #endif // __clang__
-        if (input_size > std::numeric_limits<uInt>::max() || output_size > std::numeric_limits<uInt>::max())
+        if (input_size > (std::numeric_limits<uInt>::max)() || output_size > (std::numeric_limits<uInt>::max)())
 #if defined(__clang__)
 #pragma clang diagnostic pop
 #endif // __clang__
@@ -273,7 +268,7 @@ public:
 class gzip_decompressor : public zlib_decompressor_base
 {
 public:
-    gzip_decompressor() : zlib_decompressor_base(16) // gzip auto-detect
+    gzip_decompressor() : zlib_decompressor_base(31) // 15 is MAX_WBITS in zconf.h; add 16 for gzip
     {
     }
 };
@@ -600,6 +595,7 @@ private:
 class generic_compress_factory : public compress_factory
 {
 public:
+    ~generic_compress_factory() CPPREST_NOEXCEPT {}
     generic_compress_factory(const utility::string_t& algorithm,
                              std::function<std::unique_ptr<compress_provider>()> make_compressor)
         : m_algorithm(algorithm), _make_compressor(make_compressor)
@@ -619,6 +615,7 @@ private:
 class generic_decompress_factory : public decompress_factory
 {
 public:
+    ~generic_decompress_factory() CPPREST_NOEXCEPT {}
     generic_decompress_factory(const utility::string_t& algorithm,
                                uint16_t weight,
                                std::function<std::unique_ptr<decompress_provider>()> make_decompressor)
